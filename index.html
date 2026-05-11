@@ -358,7 +358,7 @@ function nav(pg){
   document.querySelectorAll('.ni').forEach((el,i)=>el.classList.toggle('active',PAGES[i]===pg));
   document.getElementById('ptitle').innerHTML=
     (TITLES[pg]||pg)+(SUBS[pg]?` <span class="tb-sub">${SUBS[pg]}</span>`:'');
-  S.f={tipo:'todos',status:'todos',busca:'',filial:'todos'};
+  S.f={tipo:'todos',status:'todos',busca:'',filial:'todos',comprador:'todos'};
   const c=document.getElementById('content');
   c.style.opacity='0';
   setTimeout(()=>{render();c.style.transition='opacity .18s';c.style.opacity='1';},70);
@@ -466,6 +466,7 @@ function getFPC(){
   if(S.f.filial&&S.f.filial!=='todos') d=d.filter(x=>x.C7_FILIAL===S.f.filial);
   if(S.f.tipo!=='todos') d=d.filter(x=>S.f.tipo==='R'?x.C7_TIPO!=='S':x.C7_TIPO==='S');
   if(S.f.status!=='todos') d=d.filter(x=>x.C7_STATUS===S.f.status);
+  if(S.f.comprador&&S.f.comprador!=='todos') d=d.filter(x=>x.C7_COMPRADOR===S.f.comprador);
   if(S.f.busca){const b=S.f.busca.toLowerCase();d=d.filter(x=>JSON.stringify(x).toLowerCase().includes(b));}
   if(S.sort.campo) d.sort((a,b)=>{
     const av=a[S.sort.campo],bv=b[S.sort.campo];
@@ -477,21 +478,23 @@ function getFPC(){
 }
 
 function rowsPC(d){
-  if(!d.length) return `<tr><td colspan="12"><div class="empty"><div class="empty-i">📋</div><div class="empty-t">Nenhum pedido encontrado</div><div class="empty-s">Ajuste os filtros ou importe MATA121</div></div></td></tr>`;
-  return d.map(r=>`<tr onclick="vPC('${r.C7_NUM}')" style="cursor:pointer">
+  if(!d.length) return `<tr><td colspan="14"><div class="empty"><div class="empty-i">📋</div><div class="empty-t">Nenhum pedido encontrado</div><div class="empty-s">Ajuste os filtros ou importe MATA121</div></div></td></tr>`;
+  return d.map(r=>`<tr onclick="vPC('${r.C7_NUM}','${r.C7_PRODUTO}')" style="cursor:pointer">
     <td class="mn">${r.C7_NUM}</td>
     <td>${btipo(r.C7_TIPO)}</td>
     <td class="mn" style="font-size:11px">${r.C7_FILIAL||''}</td>
-    <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="${r.C7_FORNECE}">${r.C7_FORNECE}</td>
-    <td style="max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="${r.C7_DESCRI}">${r.C7_DESCRI}</td>
-    <td class="mn">${r.C7_CC}</td>
-    <td class="mn">${fmt(r.C7_QUANT)}</td>
+    <td style="max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="${r.C7_FORNECE}">${r.C7_FORNECE}</td>
+    <td class="mn" style="font-size:11px">${r.C7_PRODUTO||''}</td>
+    <td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="${r.C7_DESCRI}">${r.C7_DESCRI}</td>
+    <td class="mn">${r.C7_CC||''}</td>
+    <td class="mn">${fmt(r.C7_QUANT)} ${r.C7_UM||''}</td>
     <td class="mn">R$&nbsp;${fmt(r.C7_PRUNIT)}</td>
     <td class="mn" style="font-weight:600">R$&nbsp;${fmt(r.C7_TOTAL)}</td>
     <td>${bpc(r.C7_STATUS)}</td>
     <td class="mn" style="font-size:11px">${r.C7_EMISSAO}</td>
     <td class="mn" style="font-size:11px">${r.C7_DATPRF}</td>
-    <td><button class="btn btn-g" style="padding:4px 9px;font-size:11px" onclick="event.stopPropagation();vPC('${r.C7_NUM}')">Ver</button></td>
+    <td style="font-size:11px;color:var(--muted)">${r.C7_COMPRADOR||''}</td>
+    <td><button class="btn btn-g" style="padding:4px 9px;font-size:11px" onclick="event.stopPropagation();vPC('${r.C7_NUM}','${r.C7_PRODUTO}')">Ver</button></td>
   </tr>`).join('');
 }
 
@@ -515,6 +518,10 @@ function rPC(){
       <option value="todos">Todos os status</option>
       ${Object.entries(LPC).filter(([k])=>k).map(([k,v])=>`<option value="${k}" ${S.f.status===k?'selected':''}>${v}</option>`).join('')}
     </select>
+    <select class="fsel" onchange="S.f.comprador=this.value;renderTabela()">
+      <option value="todos">Todos os compradores</option>
+      ${[...new Set(S.pc.map(x=>x.C7_COMPRADOR).filter(Boolean))].sort().map(c=>`<option value="${c}" ${(S.f.comprador||'todos')===c?'selected':''}>${c}</option>`).join('')}
+    </select>
     <span id="filter-count" class="fcnt">${d.length} / ${S.pc.length}</span>
   </div>
   <div class="tw"><table>
@@ -523,14 +530,16 @@ function rPC(){
       <th onclick="so('C7_TIPO')">Tipo ↕</th>
       <th onclick="so('C7_FILIAL')">Filial ↕</th>
       <th onclick="so('C7_FORNECE')">Fornecedor ↕</th>
+      <th onclick="so('C7_PRODUTO')">Produto ↕</th>
       <th onclick="so('C7_DESCRI')">Descrição ↕</th>
       <th onclick="so('C7_CC')">C.Custo ↕</th>
-      <th onclick="so('C7_QUANT')">Qtd ↕</th>
+      <th onclick="so('C7_QUANT')">Qtd / UN ↕</th>
       <th onclick="so('C7_PRUNIT')">Pr.Unit ↕</th>
       <th onclick="so('C7_TOTAL')">Total ↕</th>
       <th onclick="so('C7_STATUS')">Status ↕</th>
       <th onclick="so('C7_EMISSAO')">Emissão ↕</th>
       <th onclick="so('C7_DATPRF')">Entrega ↕</th>
+      <th onclick="so('C7_COMPRADOR')">Comprador ↕</th>
       <th></th>
     </tr></thead>
     <tbody id="tbody-main">${rowsPC(d)}</tbody>
@@ -691,38 +700,88 @@ function rEst(){
 // ═══════════════════════════════════════════════
 // MODAIS
 // ═══════════════════════════════════════════════
-function vPC(num){
-  const r=S.pc.find(x=>x.C7_NUM===num);if(!r)return;
+function vPC(num, prod){
+  /* Se veio produto específico, mostra detalhe desse item.
+     Senão, mostra todos os itens do pedido agrupados. */
+  const todos=S.pc.filter(x=>x.C7_NUM===num);
+  if(!todos.length)return;
+  const r=prod?todos.find(x=>x.C7_PRODUTO===prod)||todos[0]:todos[0];
+  const totalPC=todos.reduce((a,b)=>a+(+b.C7_TOTAL||0),0);
+  /* Tabela de itens do mesmo pedido */
+  const itensHTML=todos.length>1?`
+    <div style="margin-top:14px">
+      <div class="fl" style="margin-bottom:7px">TODOS OS ITENS DESTE PEDIDO (${todos.length})</div>
+      <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
+        <table style="width:100%;border-collapse:collapse;font-size:11.5px">
+          <thead style="background:var(--surface2)">
+            <tr>
+              <th style="padding:7px 10px;text-align:left;color:var(--muted);font-size:10px;text-transform:uppercase">Produto</th>
+              <th style="padding:7px 10px;text-align:left;color:var(--muted);font-size:10px;text-transform:uppercase">Descrição</th>
+              <th style="padding:7px 10px;text-align:right;color:var(--muted);font-size:10px;text-transform:uppercase">Qtd/UN</th>
+              <th style="padding:7px 10px;text-align:right;color:var(--muted);font-size:10px;text-transform:uppercase">Pr.Unit</th>
+              <th style="padding:7px 10px;text-align:right;color:var(--muted);font-size:10px;text-transform:uppercase">Total</th>
+              <th style="padding:7px 10px;text-align:left;color:var(--muted);font-size:10px;text-transform:uppercase">Entrega</th>
+              <th style="padding:7px 10px;text-align:left;color:var(--muted);font-size:10px;text-transform:uppercase">SC</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${todos.map((it,i)=>`<tr style="border-top:1px solid var(--border);background:${it.C7_PRODUTO===r.C7_PRODUTO?'rgba(79,124,255,.07)':''}">
+              <td style="padding:7px 10px;font-family:var(--mono);font-size:11px">${it.C7_PRODUTO}</td>
+              <td style="padding:7px 10px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${it.C7_DESCRI}">${it.C7_DESCRI}</td>
+              <td style="padding:7px 10px;text-align:right;font-family:var(--mono)">${fmt(it.C7_QUANT)} ${it.C7_UM||''}</td>
+              <td style="padding:7px 10px;text-align:right;font-family:var(--mono)">R$&nbsp;${fmt(it.C7_PRUNIT)}</td>
+              <td style="padding:7px 10px;text-align:right;font-family:var(--mono);font-weight:600">R$&nbsp;${fmt(it.C7_TOTAL)}</td>
+              <td style="padding:7px 10px;font-family:var(--mono);font-size:11px">${it.C7_DATPRF}</td>
+              <td style="padding:7px 10px;font-family:var(--mono);font-size:11px">${it.C7_SOLICIT||'-'}</td>
+            </tr>`).join('')}
+            <tr style="border-top:2px solid var(--border2);background:var(--surface2)">
+              <td colspan="4" style="padding:7px 10px;font-size:11px;color:var(--muted)">Total do Pedido</td>
+              <td style="padding:7px 10px;text-align:right;font-family:var(--mono);font-weight:700;color:var(--green)">R$&nbsp;${fmt(totalPC)}</td>
+              <td colspan="2"></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>`:'';
   document.getElementById('mc').innerHTML=`
-    <div class="mh"><div class="mh-t">Pedido ${r.C7_NUM} &nbsp;${btipo(r.C7_TIPO)}&nbsp;${bpc(r.C7_STATUS)}</div>
-      <button class="mclose" onclick="closeM()">×</button></div>
+    <div class="mh">
+      <div class="mh-t">Pedido ${r.C7_NUM} &nbsp;${btipo(r.C7_TIPO)}&nbsp;${bpc(r.C7_STATUS)}
+        ${todos.length>1?`<span style="font-size:11px;color:var(--muted);font-weight:400;margin-left:8px">${todos.length} itens</span>`:''}
+      </div>
+      <button class="mclose" onclick="closeM()">×</button>
+    </div>
     <div class="mb">
       <div class="mrow">
         <div class="mf"><div class="fl">Filial</div><div class="fv mn" style="font-size:11px">${r.C7_FILIAL_DESC||r.C7_FILIAL}</div></div>
-        <div class="mf"><div class="fl">C7_NUM / C7_ITEM</div><div class="fv mn">${r.C7_NUM} / ${r.C7_ITEM}</div></div>
-        <div class="mf"><div class="fl">C7_EMISSAO</div><div class="fv mn">${r.C7_EMISSAO}</div></div>
-        <div class="mf"><div class="fl">C7_DATPRF</div><div class="fv mn">${r.C7_DATPRF}</div></div>
+        <div class="mf"><div class="fl">Número / Item</div><div class="fv mn">${r.C7_NUM}</div></div>
+        <div class="mf"><div class="fl">Emissão</div><div class="fv mn">${r.C7_EMISSAO}</div></div>
+        <div class="mf"><div class="fl">Comprador</div><div class="fv" style="font-size:12px">${r.C7_COMPRADOR||'-'}</div></div>
       </div>
       <div class="mrow">
-        <div class="mf full"><div class="fl">C7_PRODUTO · C7_DESCRI</div><div class="fv">${r.C7_PRODUTO} — ${r.C7_DESCRI}</div></div>
+        <div class="mf full"><div class="fl">Produto · Descrição</div><div class="fv">${r.C7_PRODUTO} — ${r.C7_DESCRI}</div></div>
       </div>
       <div class="mrow">
-        <div class="mf full"><div class="fl">Fornecedor (CNPJ/Cód.) · Loja</div><div class="fv mn">${r.C7_FORNECE} / Loja ${r.C7_LOJA}</div></div>
+        <div class="mf full"><div class="fl">Fornecedor (CNPJ/Cód.)</div><div class="fv mn">${r.C7_FORNECE}</div></div>
       </div>
       <div class="mrow">
-        <div class="mf"><div class="fl">Qtd / Un</div><div class="fv mn">${fmt(r.C7_QUANT)} ${r.C7_UM||''}</div></div>
-        <div class="mf"><div class="fl">C7_QUJE (entregue)</div><div class="fv mn" style="color:var(--green)">${fmt(r.C7_QUJE)}</div></div>
-        <div class="mf"><div class="fl">C7_PRUNIT</div><div class="fv mn">R$&nbsp;${fmt(r.C7_PRUNIT)}</div></div>
-        <div class="mf"><div class="fl">C7_TOTAL</div><div class="fv mn" style="font-weight:600">R$&nbsp;${fmt(r.C7_TOTAL)}</div></div>
+        <div class="mf"><div class="fl">Qtd / Unidade</div><div class="fv mn">${fmt(r.C7_QUANT)} ${r.C7_UM||''}</div></div>
+        <div class="mf"><div class="fl">Qtd. Entregue</div><div class="fv mn" style="color:var(--green)">${fmt(r.C7_QUJE)}</div></div>
+        <div class="mf"><div class="fl">Preço Unitário</div><div class="fv mn">R$&nbsp;${fmt(r.C7_PRUNIT)}</div></div>
+        <div class="mf"><div class="fl">Total do Item</div><div class="fv mn" style="font-weight:600">R$&nbsp;${fmt(r.C7_TOTAL)}</div></div>
       </div>
       <div class="mrow">
-        <div class="mf"><div class="fl">C7_CC</div><div class="fv mn">${r.C7_CC}</div></div>
-        <div class="mf"><div class="fl">C7_RESIDUO</div><div class="fv mn">${r.C7_RESIDUO}</div></div>
-        <div class="mf"><div class="fl">C7_SOLICIT (SC vinculada)</div><div class="fv mn">${r.C7_SOLICIT||'-'}</div></div>
+        <div class="mf"><div class="fl">Centro de Custo</div><div class="fv mn">${r.C7_CC||'-'}</div></div>
+        <div class="mf"><div class="fl">Classe Valor</div><div class="fv mn">${r.C7_CLASSEVALOR||'-'}</div></div>
+        <div class="mf"><div class="fl">SC de Origem</div><div class="fv mn">${r.C7_SOLICIT||'-'}</div></div>
+        <div class="mf"><div class="fl">Dt. Entrega</div><div class="fv mn">${r.C7_DATPRF}</div></div>
       </div>
-      ${r.C7_OBS?`<div class="mrow"><div class="mf full"><div class="fl">C7_OBS</div><div class="fv" style="color:var(--amber)">${r.C7_OBS}</div></div></div>`:''}
+      ${r.C7_OBS?`<div class="mrow"><div class="mf full"><div class="fl">Observação</div><div class="fv" style="color:var(--amber)">${r.C7_OBS}</div></div></div>`:''}
+      ${itensHTML}
     </div>
-    <div class="mfoot"><button class="btn btn-g" onclick="closeM()">Fechar</button></div>`;
+    <div class="mfoot">
+      <span style="font-size:12px;color:var(--muted);margin-right:auto">Total do PC: <strong style="color:var(--green)">R$&nbsp;${fmt(totalPC)}</strong></span>
+      <button class="btn btn-g" onclick="closeM()">Fechar</button>
+    </div>`;
   document.getElementById('modal').style.display='flex';
 }
 
@@ -777,6 +836,7 @@ function rImp(){
       ['Classe Valor','Classe Valor','Classe orçamentária'],['Centro Custo','Centro de Custo','CC do pedido'],
       ['Data Emissao','Data Emissão','Data do pedido'],['Dt. Entrega','Previsão entrega','Data prometida'],
       ['Numero da SC','SC de origem','SC1 que gerou este PC'],['Qtd.Entregue','Qtd entregue','Baixas por NF'],
+      ['Comprador','Comprador','Login do comprador responsável'],
     ],
     mata110:[
       ['Filial','Filial','Ex: 020102-TGM - FILIAL BARRO ALTO'],['Numero da SC','Número SC','Identificador único SC1'],
@@ -954,50 +1014,55 @@ function nNum(v){if(v===null||v===undefined||v==='')return 0;if(typeof v==='numb
 
 function impPC(rows){
   const n=rows.map((r,i)=>{
-    /* Filial: "020102-TGM - FILIAL BARRO ALTO" → pegar só o código antes do hífen */
+    /* Filial: "020102-TGM - FILIAL BARRO ALTO" → código antes do 1º hífen */
     const filialRaw=mp(r,'C7_FILIAL','Filial','filial')||'';
     const filial=filialRaw.split('-')[0].trim()||'01';
+    /* Unidade: "SV" = Serviço/Uso Direto */
     const um=mp(r,'Unidade','Unid Medida','C7_UM','um','unidade');
     const quant=nNum(mp(r,'C7_QUANT','Quantidade','quantidade','qtd','qty'));
     const prunit=nNum(mp(r,'C7_PRUNIT','Prc Unitario','preco unitario','prunit','valor unitario'));
-    const quje=nNum(mp(r,'C7_QUJE','Qtd.Entregue','qtd entregue','quje','entregue'));
-    const statusRaw=mp(r,'C7_STATUS','status','situacao');
+    const quje=nNum(mp(r,'C7_QUJE','Qtd.Entregue','qtd.entregue','qtd entregue','quje','entregue'));
+    const statusRaw=mp(r,'C7_STATUS','status','situacao','Status');
+    /* Numero da SC: coluna "Numero da SC" — pode vir None/vazio */
+    const solicit=mp(r,'C7_SOLICIT','Numero da SC','numero da sc','numerodaSC','sc vinculada','solicit');
+    /* Comprador: campo novo no layout atual */
+    const comprador=mp(r,'Comprador','C7_COMPRADOR','comprador','buyer','compradorsc');
     return{
       C7_FILIAL:filial,
       C7_FILIAL_DESC:filialRaw,
       C7_NUM:mp(r,'C7_NUM','Numero','numero','num')||String(S.pc.length+i+1).padStart(6,'0'),
-      C7_ITEM:mp(r,'C7_ITEM','Item da SC','item')||String(i+1).padStart(3,'0'),
-      C7_PRODUTO:mp(r,'C7_PRODUTO','Produto','produto','codigo produto'),
-      C7_DESCRI:mp(r,'C7_DESCRI','Descricao','descricao','descri','desc'),
-      /* Fornecedor no export real = CNPJ. Exibir como código do fornecedor */
-      C7_FORNECE:mp(r,'C7_FORNECE','Fornecedor','fornecedor','fornece','cnpj fornecedor'),
+      C7_ITEM:mp(r,'C7_ITEM','item')||String(i+1).padStart(3,'0'),
+      C7_PRODUTO:mp(r,'C7_PRODUTO','Produto','produto','codigo produto','Produto'),
+      C7_DESCRI:mp(r,'C7_DESCRI','Descricao','descricao','descri','desc','Descricao'),
+      /* Fornecedor = CNPJ/cód. no export do Protheus */
+      C7_FORNECE:mp(r,'C7_FORNECE','Fornecedor','fornecedor','fornece','cnpj fornecedor','Fornecedor'),
       C7_LOJA:mp(r,'C7_LOJA','loja')||'01',
       C7_UM:um,
       C7_QUANT:quant,
       C7_PRUNIT:prunit,
-      /* C7_TOTAL calculado por item pois export não traz coluna Total */
+      /* Total calculado: export MATA121 não traz coluna Total separada */
       C7_TOTAL:+(quant*prunit).toFixed(2),
-      C7_CC:mp(r,'C7_CC','Centro Custo','centro custo','centro de custo','cc'),
-      C7_CLASSEVALOR:mp(r,'Classe Valor','classe valor','C7_CC2'),
-      /* C7_TIPO deduzido pela Unidade: SV = Serviço/Uso Direto */
+      C7_CC:mp(r,'C7_CC','Centro Custo','centro custo','centro de custo','cc','Centro Custo'),
+      C7_CLASSEVALOR:mp(r,'Classe Valor','classe valor','classvalor','C7_CLASSEVALOR'),
+      /* Tipo deduzido por Unidade = SV → Uso Direto/Serviço */
       C7_TIPO:nTipo(mp(r,'C7_TIPO','tipo'),um),
-      C7_EMISSAO:fmtData(mp(r,'C7_EMISSAO','Data Emissao','data emissao','emissao','data')),
-      C7_DATPRF:fmtData(mp(r,'C7_DATPRF','Dt. Entrega','datprf','previsao entrega','entrega','dt entrega')),
+      C7_EMISSAO:fmtData(mp(r,'C7_EMISSAO','Data Emissao','data emissao','emissao','data','Data Emissao')),
+      C7_DATPRF:fmtData(mp(r,'C7_DATPRF','Dt. Entrega','dt. entrega','datprf','previsao entrega','entrega','dt entrega')),
       C7_QUJE:quje,
       C7_RESIDUO:'N',
       C7_STATUS:nStPC(statusRaw,quje,quant),
-      /* Numero da SC = SC de origem vinculada ao pedido */
-      C7_SOLICIT:mp(r,'C7_SOLICIT','Numero da SC','numero da sc','sc vinculada','solicit'),
+      C7_SOLICIT:solicit,
+      C7_COMPRADOR:comprador,
       C7_OBS:mp(r,'C7_OBS','obs','observacao'),
     };
   });
-  /* Upsert por chave: C7_FILIAL+C7_NUM+C7_PRODUTO evita duplicatas na reimportação */
+  /* Upsert por filial+numero+produto — evita duplicatas na reimportação */
   const chave=x=>x.C7_FILIAL+'|'+x.C7_NUM+'|'+x.C7_PRODUTO;
   const idx=new Map(S.pc.map(x=>[chave(x),x]));
   n.forEach(x=>idx.set(chave(x),x));
   S.pc=[...idx.values()];
   updBadges();salvar();
-  toast(`✅ ${n.length} linhas MATA121 importadas (${S.pc.length} total sem duplicatas)!`,'success');
+  toast('✅ '+n.length+' linhas MATA121 importadas ('+S.pc.length+' total sem duplicatas)!','success');
   setTimeout(()=>nav('pedidos'),700);
 }
 
