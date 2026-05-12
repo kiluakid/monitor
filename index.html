@@ -662,10 +662,40 @@ function updBadges(){
 // ═══════════════════════════════════════════════
 // STATUS / TIPO helpers
 // ═══════════════════════════════════════════════
-const LPC={'L':'Liberado','P':'Parcial','E':'Em cotação','C':'Cancelado','A':'Aprovado','':'Pendente'};
-const LSC={'P':'Pendente','L':'Liberada','G':'Gerou pedido','C':'Cancelada','B':'Bloqueada','R':'Rejeitada','':'Pendente'};
-const CPC={'L':'bg','P':'bt','E':'bb','C':'br','A':'bg','':'ba'};
-const CSC={'P':'ba','L':'bg','G':'bt','C':'br','B':'ba','R':'br','':'ba'};
+const LPC={
+  '':'Pendente',   // sem status = aguardando
+  'P':'Parcial',   // entrega parcial
+  'E':'Em cotação',// em processo de cotação
+  'A':'Aprovado',  // aprovado / em andamento
+  'L':'Liberado',  // liberado / concluído
+  'C':'Cancelado', // cancelado
+};
+const LSC={
+  'P':'Pendente',    // aguardando ação
+  'E':'Em cotação',  // em processo de cotação
+  'L':'Liberada',    // aprovada/liberada
+  'G':'Gerou pedido',// SC convertida em PC
+  'B':'Bloqueada',   // bloqueada
+  'R':'Rejeitada',   // rejeitada
+  'C':'Cancelada',   // cancelada
+};
+const CPC={
+  '':'ba',  // Pendente  → âmbar
+  'P':'bt', // Parcial   → teal
+  'E':'bb', // Em cotação → azul
+  'A':'bb', // Aprovado  → azul
+  'L':'bg', // Liberado  → verde
+  'C':'br', // Cancelado → vermelho
+};
+const CSC={
+  'P':'ba', // Pendente    → âmbar
+  'E':'bb', // Em cotação  → azul
+  'L':'bg', // Liberada    → verde
+  'G':'bg', // Gerou pedido → verde
+  'B':'br', // Bloqueada   → vermelho
+  'R':'br', // Rejeitada   → vermelho
+  'C':'br', // Cancelada   → vermelho
+};
 
 function bpc(s){return`<span class="badge ${CPC[s]||'bz'}">${LPC[s]||s}</span>`;}
 function bsc(s){return`<span class="badge ${CSC[s]||'bz'}">${LSC[s]||s}</span>`;}
@@ -764,7 +794,7 @@ function rDash(){
   const cancelados=p.filter(x=>x.C7_STATUS==='C').length;
   const aprovados=p.filter(x=>x.C7_STATUS==='A').length;
   const vTotal=p.reduce((a,b)=>a+(+b.C7_TOTAL||0),0);
-  const scSemPC=s.filter(x=>x.C1_STATUS!=='G'&&x.C1_STATUS!=='C').length;
+  const scSemPC=s.filter(x=>x.C1_STATUS==='P'||x.C1_STATUS==='E').length; // Pendente ou Em cotação
   const dispZero=e.filter(x=>(+x.DISPONIVEL||0)<=0).length;
   const ultP=[...p].slice(-5).reverse();
   const ultS=[...s].slice(-5).reverse();
@@ -777,8 +807,8 @@ function rDash(){
     <div class="kpi bl"><div class="kpi-lb">Pedidos SC7</div><div class="kpi-v">${p.length}</div>
       <div class="kpi-s">Estoque: ${p.filter(x=>x.C7_TIPO!=='S').length} · Direto: ${p.filter(x=>x.C7_TIPO==='S').length}</div>
       <span class="tag tb">MATA121</span></div>
-    <div class="kpi am"><div class="kpi-lb">Em aberto / parciais</div><div class="kpi-v">${abertos+parciais}</div>
-      <div class="kpi-s">Pendentes: ${abertos} · Aprovados: ${aprovados}</div>
+    <div class="kpi am"><div class="kpi-lb">Pendente / Parcial</div><div class="kpi-v">${abertos+parciais}</div>
+      <div class="kpi-s">Pendentes: ${abertos} · Parciais: ${parciais}</div>
       <span class="tag ta">${p.length?Math.round((abertos+parciais)/p.length*100):0}% do total</span></div>
     <div class="kpi gn"><div class="kpi-lb">Valor total (C7_TOTAL)</div>
       <div class="kpi-v" style="font-size:17px">R$&nbsp;${vTotal.toLocaleString('pt-BR',{minimumFractionDigits:2})}</div>
@@ -876,7 +906,12 @@ function rPC(){
     </select>
     <select class="fsel" onchange="S.f.status=this.value;renderTabela()">
       <option value="todos">Todos os status</option>
-      ${Object.entries(LPC).filter(([k])=>k).map(([k,v])=>`<option value="${k}" ${S.f.status===k?'selected':''}>${v}</option>`).join('')}
+      <option value="" ${S.f.status===''?'selected':''}>🟡 Pendente</option>
+      <option value="P" ${S.f.status==='P'?'selected':''}>🔵 Parcial</option>
+      <option value="E" ${S.f.status==='E'?'selected':''}>🔷 Em cotação</option>
+      <option value="A" ${S.f.status==='A'?'selected':''}>🔵 Aprovado</option>
+      <option value="L" ${S.f.status==='L'?'selected':''}>🟢 Liberado</option>
+      <option value="C" ${S.f.status==='C'?'selected':''}>🔴 Cancelado</option>
     </select>
     <select class="fsel" onchange="S.f.comprador=this.value;renderTabela()">
       <option value="todos">Todos os compradores</option>
@@ -960,7 +995,13 @@ function rSC(){
     </select>
     <select class="fsel" onchange="S.f.status=this.value;renderTabela()">
       <option value="todos">Todos os status</option>
-      ${Object.entries(LSC).filter(([k])=>k).map(([k,v])=>`<option value="${k}" ${S.f.status===k?'selected':''}>${v}</option>`).join('')}
+      <option value="P" ${S.f.status==='P'?'selected':''}>🟡 Pendente</option>
+      <option value="E" ${S.f.status==='E'?'selected':''}>🔷 Em cotação</option>
+      <option value="L" ${S.f.status==='L'?'selected':''}>🟢 Liberada</option>
+      <option value="G" ${S.f.status==='G'?'selected':''}>✅ Gerou pedido</option>
+      <option value="B" ${S.f.status==='B'?'selected':''}>🔴 Bloqueada</option>
+      <option value="R" ${S.f.status==='R'?'selected':''}>🔴 Rejeitada</option>
+      <option value="C" ${S.f.status==='C'?'selected':''}>⬛ Cancelada</option>
     </select>
     <span id="filter-count" class="fcnt">${d.length} / ${S.sc.length}</span>
   </div>
@@ -1478,8 +1519,31 @@ function mp(obj,...cs){
   return '';
 }
 function nTipo(v,um=''){const s=String(v).toUpperCase();const u=String(um).toUpperCase().trim();if(u==='SV')return'S';return(s==='S'||s.includes('DIRETO')||s.includes('SERVICO'))?'S':'R';}
-function nStPC(v,quje,qtd){const s=String(v).toUpperCase();if(s==='L'||s.includes('LIBER'))return'L';if(s==='A'||s.includes('APROV'))return'A';if(s==='C'||s.includes('CANCEL'))return'C';if(s==='P'||s.includes('PARCI'))return'P';/* Se não vier status, inferir por qtd entregue */if(!v&&qtd>0){if(quje<=0)return'';if(quje>=qtd)return'L';return'P';}return '';}
-function nStSC(v,quantPed,quant){const s=String(v).toUpperCase();if(s==='L'||s.includes('LIBER'))return'L';if(s==='G'||s.includes('GERO')||s.includes('PEDIDO'))return'G';if(s==='C'||s.includes('CANCEL'))return'C';if(s==='B'||s.includes('BLOQ'))return'B';if(s==='R'||s.includes('REJEIT'))return'R';/* Se não vier status, inferir: Quant.em Ped > 0 = gerou pedido */if(!v&&quantPed>0)return'G';return'P';}
+function nStPC(v,quje,qtd){
+  const s=String(v||'').toUpperCase().trim();
+  if(!s||s==='PENDENTE'||s==='ABERTO')return'';          // Pendente
+  if(s==='E'||s.includes('COTAC')||s.includes('COTAÇ')) return'E'; // Em cotação
+  if(s==='P'||s.includes('PARCI'))                       return'P'; // Parcial
+  if(s==='A'||s.includes('APROV'))                       return'A'; // Aprovado
+  if(s==='L'||s.includes('LIBER'))                       return'L'; // Liberado
+  if(s==='C'||s.includes('CANCEL'))                      return'C'; // Cancelado
+  /* Inferir por entrega quando não há coluna status */
+  if(qtd>0){if(quje<=0)return'';if(quje>=qtd)return'L';return'P';}
+  return '';
+}
+function nStSC(v,quantPed,quant){
+  const s=String(v||'').toUpperCase().trim();
+  if(!s||s==='PENDENTE'||s==='ABERTO')return'P';            // Pendente
+  if(s==='E'||s.includes('COTAC')||s.includes('COTAÇ')) return'E'; // Em cotação
+  if(s==='L'||s.includes('LIBER'))                       return'L'; // Liberada
+  if(s==='G'||s.includes('GERO')||s.includes('PEDIDO')) return'G'; // Gerou pedido
+  if(s==='B'||s.includes('BLOQ'))                        return'B'; // Bloqueada
+  if(s==='R'||s.includes('REJEIT'))                      return'R'; // Rejeitada
+  if(s==='C'||s.includes('CANCEL'))                      return'C'; // Cancelada
+  /* Inferir: se já gerou quantidade em pedido = status G */
+  if(!v&&quantPed>0) return'G';
+  return'P';
+}
 function nNum(v){if(v===null||v===undefined||v==='')return 0;if(typeof v==='number')return+v.toFixed(4)*1||0;return+(String(v).replace(',','.').replace(/[^\d.-]/g,''))||0;}
 
 /* ── Funções de mapeamento puro (sem efeito colateral) usadas pelos chunks ── */
