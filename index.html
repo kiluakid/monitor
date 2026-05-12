@@ -908,10 +908,6 @@ function rPC(){
       <option value="todos">Todos os status</option>
       <option value="" ${S.f.status===''?'selected':''}>🟡 Pendente</option>
       <option value="P" ${S.f.status==='P'?'selected':''}>🔵 Parcial</option>
-      <option value="E" ${S.f.status==='E'?'selected':''}>🔷 Em cotação</option>
-      <option value="A" ${S.f.status==='A'?'selected':''}>🔵 Aprovado</option>
-      <option value="L" ${S.f.status==='L'?'selected':''}>🟢 Liberado</option>
-      <option value="C" ${S.f.status==='C'?'selected':''}>🔴 Cancelado</option>
     </select>
     <select class="fsel" onchange="S.f.comprador=this.value;renderTabela()">
       <option value="todos">Todos os compradores</option>
@@ -997,11 +993,6 @@ function rSC(){
       <option value="todos">Todos os status</option>
       <option value="P" ${S.f.status==='P'?'selected':''}>🟡 Pendente</option>
       <option value="E" ${S.f.status==='E'?'selected':''}>🔷 Em cotação</option>
-      <option value="L" ${S.f.status==='L'?'selected':''}>🟢 Liberada</option>
-      <option value="G" ${S.f.status==='G'?'selected':''}>✅ Gerou pedido</option>
-      <option value="B" ${S.f.status==='B'?'selected':''}>🔴 Bloqueada</option>
-      <option value="R" ${S.f.status==='R'?'selected':''}>🔴 Rejeitada</option>
-      <option value="C" ${S.f.status==='C'?'selected':''}>⬛ Cancelada</option>
     </select>
     <span id="filter-count" class="fcnt">${d.length} / ${S.sc.length}</span>
   </div>
