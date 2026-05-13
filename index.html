@@ -830,6 +830,11 @@ function rDash(){
     <div class="kpi pu"><div class="kpi-lb">Estoque crítico</div><div class="kpi-v">${dispZero}</div>
       <div class="kpi-s">Disponível ≤ 0 de ${e.length} produtos</div>
       <span class="tag ${dispZero?'tr':'tg'}">${dispZero?'Repor':'OK'}</span></div>
+    <div class="kpi am" style="cursor:pointer" onclick="nav('estoque');setTimeout(function(){S.f.status='ponto';renderTabela(true);},250)" title="Ver produtos com ponto de pedido atingido">
+      <div class="kpi-lb">🔔 Com Ponto Pedido</div>
+      <div class="kpi-v">${e.filter(function(x){return(+x.PONTO_PEDIDO||0)>0;}).length}</div>
+      <div class="kpi-s">Produtos com ponto configurado</div>
+      <span class="tag ta">Clique para ver</span></div>
   </div>
   <div class="dash-grid">
     <div>
@@ -1032,6 +1037,10 @@ function getFEst(){
   const idx=S.idx.est;
   let d=S.est.filter(function(x,i){
     if(S.f.filial&&S.f.filial!=='todos'&&x.B1_FILIAL!==S.f.filial) return false;
+    if(S.f.status==='ponto'){
+      /* Produtos que têm ponto de pedido cadastrado (qualquer valor > 0) */
+      if(!((+x.PONTO_PEDIDO||0)>0)) return false;
+    }
     if(S.f.status==='critico'&&(+x.DISPONIVEL||0)>0) return false;
     if(S.f.status==='baixo'){
       const disp=+x.DISPONIVEL||0,qatu=+x.B2_QATU||0;
@@ -1071,7 +1080,9 @@ function rowsEst(d){
       +'<td class="mn" style="color:var(--teal)">'+fmt(+r.B2_SCS||0)+'</td>'
       +'<td class="mn" style="color:var(--accent)">'+fmt(+r.B2_PCS||0)+'</td>'
       +'<td class="mn" style="color:var(--muted2)">'+fmt(+r.MED_CONSUMO||0)+'</td>'
-      +'<td class="mn">'+fmt(+r.PONTO_PEDIDO||0)+'</td>'
+      +'<td class="mn" style="'+(((+r.PONTO_PEDIDO||0)>0)?'color:var(--accent);font-weight:600':'')+'">'
+      +((+r.PONTO_PEDIDO||0)>0?fmt(+r.PONTO_PEDIDO):'-')
+      +'</td>'
       +'<td class="mn" style="font-size:11px">'+(r.ULT_SAIDA||'-')+'</td>'
       +'<td><span class="badge '+sc+'">'+sit+'</span></td>'
       +'<td><span class="badge bz" style="font-size:9.5px">'+(r.B1_CLASSE||'-')+'</span></td>'
@@ -1095,6 +1106,7 @@ function rEst(){
     </select>
     <select class="fsel" onchange="S.f.status=this.value;renderTabela()">
       <option value="todos">Todos os produtos</option>
+      <option value="ponto" ${S.f.status==='ponto'?'selected':''}>🔔 Com Ponto de Pedido</option>
       <option value="critico" ${S.f.status==='critico'?'selected':''}>🔴 Saldo zero / negativo</option>
       <option value="baixo" ${S.f.status==='baixo'?'selected':''}>🟡 Saldo baixo (&lt;20%)</option>
     </select>
