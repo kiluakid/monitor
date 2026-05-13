@@ -151,6 +151,13 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
   color:#fff;box-shadow:0 2px 12px rgba(79,124,255,.35);
 }
 .btn-p:hover{box-shadow:0 4px 20px rgba(79,124,255,.5);transform:translateY(-1px);}
+.btn-s{
+  background:linear-gradient(135deg,#0d9f5f,#07784a);
+  color:#fff;box-shadow:0 2px 12px rgba(13,159,95,.35);
+  border:none;
+}
+.btn-s:hover{box-shadow:0 4px 20px rgba(13,159,95,.5);transform:translateY(-1px);}
+.btn-s:disabled{opacity:.6;cursor:not-allowed;transform:none;}
 .btn-g{
   background:var(--surface2);color:var(--muted2);
   border:1px solid var(--border);
@@ -530,12 +537,13 @@ input[type=file]{display:none;}
     <span class="tb-title" id="ptitle">Dashboard</span>
     <div style="display:flex;gap:7px;align-items:center">
       <button class="btn btn-g" onclick="limpar()" title="Limpar todos os dados">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>
-        <span style="display:none;"></span>Limpar
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>Limpar
       </button>
-      <button class="btn btn-p" onclick="nav('importar')" style="gap:7px">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-        Importar
+      <button class="btn btn-s" onclick="salvarManual()" id="btn-save" title="Salvar dados agora">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Salvar
+      </button>
+      <button class="btn btn-p" onclick="nav('importar')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Importar
       </button>
     </div>
   </header>
@@ -1300,41 +1308,69 @@ function showProgress(msg,pct){
   let el=document.getElementById('prog-bar');
   if(!el){
     el=document.createElement('div');el.id='prog-bar';
-    el.style.cssText='position:fixed;bottom:24px;right:24px;background:#181c27;border:1px solid #2a2f42;border-radius:12px;padding:14px 18px;z-index:9999;min-width:260px;box-shadow:0 8px 32px #0008;font-size:13px;';
+    el.style.cssText=[
+      'position:fixed;bottom:28px;right:28px;',
+      'background:rgba(13,17,30,.97);',
+      'border:1px solid rgba(79,124,255,.25);',
+      'border-radius:14px;padding:16px 20px;',
+      'z-index:9999;min-width:300px;',
+      'box-shadow:0 12px 40px rgba(0,0,0,.6),0 0 0 1px rgba(79,124,255,.1);',
+      'font-size:13px;font-family:Inter,sans-serif;',
+      'backdrop-filter:blur(12px);',
+    ].join('');
     document.body.appendChild(el);
   }
-  el.innerHTML='<div style="color:#e8eaf0;margin-bottom:8px">'+msg+'</div>'
-    +'<div style="background:#2a2f42;border-radius:6px;height:6px;overflow:hidden">'
-    +'<div style="background:#4f7cff;height:100%;width:'+pct+'%;transition:width .2s;border-radius:6px"></div></div>';
+  el.innerHTML=
+    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'
+    +'<div style="width:8px;height:8px;border-radius:50%;background:#4f7cff;box-shadow:0 0 8px #4f7cff;animation:pulse 1s infinite;flex-shrink:0"></div>'
+    +'<span style="color:#e2e6f3;font-weight:500">'+msg+'</span>'
+    +'<span style="margin-left:auto;color:#4f7cff;font-family:JetBrains Mono,monospace;font-size:11px;font-weight:600">'+pct+'%</span>'
+    +'</div>'
+    +'<div style="background:rgba(31,38,64,.8);border-radius:99px;height:4px;overflow:hidden">'
+    +'<div style="background:linear-gradient(90deg,#4f7cff,#7c5cff);height:100%;width:'+pct+'%;transition:width .25s ease;border-radius:99px;box-shadow:0 0 8px rgba(79,124,255,.5)"></div>'
+    +'</div>';
 }
 function hideProgress(){
   const el=document.getElementById('prog-bar');
-  if(el){setTimeout(function(){el.remove();},600);}
+  if(el){
+    el.style.opacity='0';
+    el.style.transform='translateY(8px)';
+    el.style.transition='all .4s ease';
+    setTimeout(function(){el.remove();},450);
+  }
 }
 
 /* Lê todas as abas relevantes do workbook Protheus.
    Retorna array de arrays já com cabeçalho detectado por aba. */
+/* Normaliza cabeçalho: remove _x000D_, \r\n, espaços extras (problema do MATR290) */
+function normHdr(h){
+  return String(h||'').replace(/_x000D_/g,'').replace(/\r\n|\r|\n/g,' ').replace(/\s+/g,' ').trim();
+}
+
 function lerAbasProtheus(wb){
   const abas=wb.SheetNames.filter(function(n){return n.toLowerCase()!=='parametros';});
   const resultado=[];
   abas.forEach(function(nome){
     const ws=wb.Sheets[nome];
-    /* sheetRows:1 para ler só cabeçalho e detectar hdrIdx sem carregar tudo */
-    const amostra=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:false,range:0});
-    /* Detectar hdrIdx na amostra (primeiras 4 linhas) */
+    /* Amostra das primeiras 4 linhas para detectar hdrIdx (raw:false só aqui para comparar strings) */
+    const amostra=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:false,range:{s:{r:0,c:0},e:{r:3,c:30}}});
     let hdrIdx=0;
-    for(let i=0;i<Math.min(amostra.length,4);i++){
+    for(let i=0;i<amostra.length;i++){
       if(amostra[i].filter(function(c){return c!==''&&c!==null&&c!==undefined;}).length>2){hdrIdx=i;break;}
     }
-    /* Ler planilha completa com range a partir do hdrIdx */
-    const arr=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:false,range:hdrIdx});
+    /* raw:true — recebe Date nativo para datas, números como número */
+    const arr=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:true,range:hdrIdx});
     if(!arr||arr.length<2) return;
-    const hdrs=arr[0].map(function(h){return String(h||'').trim().replace(/\r\n|\r|\n/g,' ');});
+    /* Normalizar cabeçalhos (remove _x000D_ e \r\n do MATR290) */
+    const hdrs=arr[0].map(normHdr);
     for(let i=1;i<arr.length;i++){
       const row=arr[i];
-      if(row.every(function(c){return c===''||c===null||c===undefined;})) continue;
+      /* Pular linhas totalmente vazias */
+      if(!row||row.every(function(c){return c===''||c===null||c===undefined;})) continue;
       const obj={__aba__:nome};
-      for(let j=0;j<hdrs.length;j++){ if(hdrs[j]) obj[hdrs[j]]=row[j]!==undefined?row[j]:''; }
+      for(let j=0;j<hdrs.length;j++){
+        if(hdrs[j]) obj[hdrs[j]]=row[j]!==undefined?row[j]:'';
+      }
       resultado.push(obj);
     }
   });
@@ -1364,7 +1400,7 @@ function procFileObj(file,tipo){
           }
         } else {
           showProgress('📊 Descompactando XLSX…',25);
-          const wb=XLSX.read(e.target.result,{type:'array',cellDates:false,dense:true});
+          const wb=XLSX.read(e.target.result,{type:'array',cellDates:true,dense:true});
           showProgress('📊 Lendo abas…',45);
           rows=lerAbasProtheus(wb);
         }
@@ -1384,27 +1420,36 @@ function procFileObj(file,tipo){
   else rd.readAsArrayBuffer(file);
 }
 
-/* Divide o mapeamento em chunks de 3000 linhas para não travar a UI */
-const CHUNK=3000;
+/* processarEmChunks — chunk adaptativo: mede o tempo de cada step e ajusta
+   para manter cada frame abaixo de 80ms (deixa a UI responsiva).
+   Para MATR290 com 123k linhas: ~40 frames de ~3k linhas cada */
 function processarEmChunks(rows,tipo){
   const total=rows.length;
-  let processados=[];
+  /* Pré-calcular índice de colunas para mapEst evitar mp() por linha */
+  const processados=new Array(total);
+  let chunk=2000; // começa conservador
   let i=0;
   function step(){
-    const fim=Math.min(i+CHUNK,total);
+    const t0=performance.now();
+    const fim=Math.min(i+chunk,total);
     const fatia=rows.slice(i,fim);
     let mapeados;
     if(tipo==='pc') mapeados=mapPC(fatia,i);
     else if(tipo==='sc') mapeados=mapSC(fatia,i);
     else mapeados=mapEst(fatia,i);
-    processados=processados.concat(mapeados);
+    /* Copiar resultado para array pré-alocado */
+    for(let k=0;k<mapeados.length;k++) processados[i+k]=mapeados[k];
     i=fim;
+    const elapsed=performance.now()-t0;
+    /* Ajustar chunk: manter ~60ms por frame */
+    if(elapsed<30&&chunk<8000) chunk=Math.min(chunk+500,8000);
+    else if(elapsed>80&&chunk>500) chunk=Math.max(chunk-500,500);
     const pct=60+Math.round((i/total)*30);
-    showProgress('⚙️ Processando… '+i.toLocaleString('pt-BR')+'/'+total.toLocaleString('pt-BR'),pct);
+    showProgress('⚙️ Processando… '+i.toLocaleString('pt-BR')+' / '+total.toLocaleString('pt-BR'),pct);
     if(i<total){ requestAnimationFrame(step); return; }
-    /* Finalizar */
-    showProgress('💾 Salvando…',92);
-    finalizarImport(processados,tipo);
+    showProgress('💾 Salvando…',95);
+    /* Usar setTimeout para liberar o thread antes de finalizar */
+    setTimeout(function(){ finalizarImport(processados.filter(Boolean),tipo); },20);
   }
   requestAnimationFrame(step);
 }
@@ -1443,32 +1488,45 @@ function finalizarImport(n,tipo){
   }
 }
 
-/* Converte datas do Protheus: serial Excel, string AAAAMMDD, DD/MM/YYYY, MM/DD/YYYY (SheetJS), ISO */
+/* fmtData — converte qualquer representação de data do Protheus/SheetJS para DD/MM/YYYY
+   Fontes possíveis com cellDates:true:
+   - objeto Date nativo (SheetJS converte células de data)
+   - string ISO "YYYY-MM-DDTHH:mm:ss.000Z"
+   - string "AAAAMMDD" (formato interno Protheus)
+   - serial numérico Excel (fallback)
+   - DD/MM/YYYY já formatado */
 function fmtData(v){
-  if(!v||v===''||v==='0'||v===0)return'';
+  if(v===null||v===undefined||v===''||v==='0'||v===0) return '';
+  /* ── Objeto Date nativo (cellDates:true) ── */
+  if(v instanceof Date){
+    if(isNaN(v.getTime())) return '';
+    const d=String(v.getDate()).padStart(2,'0');
+    const m=String(v.getMonth()+1).padStart(2,'0');
+    const y=v.getFullYear();
+    return d+'/'+m+'/'+y;
+  }
   const s=String(v).trim();
-  /* SheetJS com raw:false formata como MM/DD/YYYY — detectar e converter para DD/MM/YYYY */
-  const sl=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if(sl){
-    const a=parseInt(sl[1]),b=parseInt(sl[2]),y=parseInt(sl[3]);
-    /* Se primeiro campo > 12, já está DD/MM/YYYY */
-    if(a>12) return String(a).padStart(2,'0')+'/'+String(b).padStart(2,'0')+'/'+y;
-    /* SheetJS retorna MM/DD/YYYY → inverter */
-    return String(b).padStart(2,'0')+'/'+String(a).padStart(2,'0')+'/'+y;
-  }
-  /* Serial Excel numérico */
-  const n=parseFloat(s.replace(',','.'));
-  if(!isNaN(n)&&n>10000&&n<60000){
-    const d=new Date(Math.round((n-25569)*86400000));
-    return d.toLocaleDateString('pt-BR');
-  }
-  /* Formato AAAAMMDD */
+  if(!s||s==='0') return '';
+  /* ── ISO com T: "2020-12-15T00:00:00.000Z" ── */
+  const iso=s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(iso) return iso[3]+'/'+iso[2]+'/'+iso[1];
+  /* ── Já está DD/MM/YYYY ── */
+  if(/^\d{2}\/\d{2}\/\d{4}$/.test(s)) return s;
+  /* ── Formato interno Protheus AAAAMMDD ── */
   if(/^\d{8}$/.test(s)){
     return s.slice(6,8)+'/'+s.slice(4,6)+'/'+s.slice(0,4);
   }
-  /* ISO AAAA-MM-DD */
-  const iso=s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if(iso) return iso[3]+'/'+iso[2]+'/'+iso[1];
+  /* ── Serial Excel numérico ── */
+  const n=parseFloat(s.replace(',','.'));
+  if(!isNaN(n)&&n>10000&&n<80000){
+    /* Corrigir bug Excel: 1900 não é bissexto mas Excel conta como tal */
+    const adj=n>60?n-1:n;
+    const epoch=new Date(1899,11,30);
+    epoch.setDate(epoch.getDate()+Math.floor(adj));
+    const d=String(epoch.getDate()).padStart(2,'0');
+    const m=String(epoch.getMonth()+1).padStart(2,'0');
+    return d+'/'+m+'/'+epoch.getFullYear();
+  }
   return s;
 }
 /* Converte data para valor comparável (para ordenação correta) */
@@ -1604,24 +1662,35 @@ function mapSC(rows,offset){
 
 function mapEst(rows,offset){
   return rows.map(function(r,i){
-    const filialRaw=mp(r,'Filial','filial','C1_FILIAL','B2_FILIAL')||String(r['__aba__']||'');
+    /* Filial: vem do campo "Filial" (código curto como "02") ou do nome da aba */
+    const filialRaw=mp(r,'Filial','filial','B1_FILIAL','B2_FILIAL')||String(r['__aba__']||'');
     const filial=filialRaw.split('-')[0].trim()||'01';
-    const qatu=nNum(mp(r,'Saldo Atual','B2_QATU','qatu','saldo','quantidade atual'));
-    const emp=nNum(mp(r,'Empenho','B2_EMPENHO','empenho','empenhado','reservado'));
-    const salpedi=nNum(mp(r,'PCs Colocados','SCs Colocadas','B2_SALPEDI','salpedi','saldo pedido','pcs colocados','scs colocadas'));
+    const qatu   =nNum(mp(r,'Saldo Atual','B2_QATU','saldoatual','saldo'));
+    const emp    =nNum(mp(r,'Empenho','B2_EMPENHO','empenho','empenhado'));
+    /* MATR290: cabeçalhos normalizados de "SCs_x000D_
+Colocadas" → "SCs Colocadas" */
+    const scs    =nNum(mp(r,'SCs Colocadas','scscolocadas','sc colocadas','salpedi'));
+    const pcs    =nNum(mp(r,'PCs Colocados','pcscolocados','pc colocados','B2_SALPEDI'));
+    const salpedi=pcs||scs; /* preferir PCs Colocados, fallback SCs */
     return{
-      B1_FILIAL:filial, B1_FILIAL_DESC:filialRaw,
-      B1_COD:mp(r,'Codigo','B1_COD','codigo','cod','code','produto')||'PROD'+String(offset+i+1).padStart(4,'0'),
-      B1_DESC:mp(r,'Descricao','B1_DESC','descricao','desc','description'),
-      B1_UM:mp(r,'UM','B1_UM','um','unidade','unidade medida')||'UN',
-      B1_TIPO:mp(r,'Tp','B1_TIPO','tipo','type')||'MC',
-      B1_GRUPO:mp(r,'Grupo','grupo'),
-      B2_LOCAL:mp(r,'B2_LOCAL','local','armazem','arm')||'01',
-      B2_QATU:qatu, B2_EMPENHO:emp, B2_SALPEDI:salpedi,
-      B2_CM1:nNum(mp(r,'B2_CM1','cm1','custo medio','custo medio unitario')),
-      B2_VATU1:nNum(mp(r,'B2_VATU1','vatu1','valor atual','valor estoque')),
-      MED_CONSUMO:nNum(mp(r,'Med. Consumo','medconsumo','consumo medio','med consumo')),
-      DISPONIVEL:+(qatu-emp).toFixed(2),
+      B1_FILIAL    :filial,
+      B1_FILIAL_DESC:filialRaw,
+      B1_COD       :mp(r,'Codigo','B1_COD','codigo','cod','produto')||'PROD'+String(offset+i+1).padStart(4,'0'),
+      B1_DESC      :mp(r,'Descricao','Desc. Cientifica','B1_DESC','descricao','desc'),
+      B1_UM        :mp(r,'UM','B1_UM','um','unidade')||'UN',
+      B1_TIPO      :mp(r,'Tp','B1_TIPO','tipo')||'MC',
+      B1_GRUPO     :mp(r,'Grupo','grupo','B1_GRUPO'),
+      B1_CLASSE    :mp(r,'Classe ABC','classeabc','classe'),
+      B2_LOCAL     :mp(r,'B2_LOCAL','local','armazem','arm')||'01',
+      B2_QATU      :qatu,
+      B2_EMPENHO   :emp,
+      B2_SALPEDI   :salpedi,
+      B2_SCS       :scs,
+      B2_CM1       :nNum(mp(r,'B2_CM1','cm1','custo medio')),
+      B2_VATU1     :nNum(mp(r,'B2_VATU1','vatu1','valor atual','valor estoque')),
+      MED_CONSUMO  :nNum(mp(r,'Med. Consumo','medconsumo','consumo medio')),
+      ULT_SAIDA    :fmtData(mp(r,'DT.Ult.Saida','dtultsaida','ultima saida')),
+      DISPONIVEL   :+(qatu-emp).toFixed(4)*1,
     };
   });
 }
@@ -1669,14 +1738,61 @@ let _saveTimer = null;
 function abrirDB(){
   return new Promise(function(res,rej){
     if(_db){res(_db);return;}
-    const req=indexedDB.open('MonitorCompras',2);
+    /* Versão 3: store 'dados' para strings JSON + store 'blobs' para datasets grandes */
+    const req=indexedDB.open('MonitorCompras',3);
     req.onupgradeneeded=function(e){
       const db=e.target.result;
       if(!db.objectStoreNames.contains('dados')) db.createObjectStore('dados');
+      if(!db.objectStoreNames.contains('blobs')) db.createObjectStore('blobs');
     };
     req.onsuccess=function(e){_db=e.target.result;res(_db);};
     req.onerror=function(){rej(req.error);};
   });
+}
+
+/* Comprime string JSON usando CompressionStream (suportado em Chrome/Edge/Firefox modernos)
+   Para datasets de 123k itens: ~15MB JSON → ~2MB comprimido */
+async function comprimirJSON(obj){
+  const json=JSON.stringify(obj);
+  if(!window.CompressionStream) return json; /* fallback: string pura */
+  const enc=new TextEncoder();
+  const stream=new CompressionStream('gzip');
+  const writer=stream.writable.getWriter();
+  writer.write(enc.encode(json));
+  writer.close();
+  const chunks=[];
+  const reader=stream.readable.getReader();
+  while(true){
+    const {done,value}=await reader.read();
+    if(done)break;
+    chunks.push(value);
+  }
+  /* Retorna Blob comprimido */
+  return new Blob(chunks,{type:'application/gzip'});
+}
+
+async function descomprimirJSON(val){
+  if(typeof val==='string') return JSON.parse(val);
+  if(!(val instanceof Blob)) return [];
+  if(!window.DecompressionStream) return [];
+  const stream=new DecompressionStream('gzip');
+  const writer=stream.writable.getWriter();
+  writer.write(await val.arrayBuffer());
+  writer.close();
+  const chunks=[];
+  const reader=stream.readable.getReader();
+  while(true){
+    const {done,value}=await reader.read();
+    if(done)break;
+    chunks.push(value);
+  }
+  const dec=new TextDecoder();
+  const json=dec.decode(new Uint8Array(chunks.reduce(function(a,b){
+    const merged=new Uint8Array(a.length+b.length);
+    merged.set(a);merged.set(b,a.length);
+    return merged;
+  })));
+  return JSON.parse(json);
 }
 
 /* salvar — debounced 800ms para não serializar a cada keystroke */
@@ -1685,59 +1801,84 @@ function salvar(){
   _saveTimer=setTimeout(_salvarAgora,800);
 }
 
-/* salvarAgora — força o save imediato (usado após importação) */
-function _salvarAgora(){
+/* _salvarAgora — usa compressão gzip para datasets grandes e IndexedDB para armazenamento ilimitado */
+async function _salvarAgora(){
   clearTimeout(_saveTimer);
+  setSyncStatus('💾 Salvando…');
   const ts=new Date().toLocaleTimeString('pt-BR');
-  abrirDB().then(function(db){
-    const tx=db.transaction('dados','readwrite');
-    const st=tx.objectStore('dados');
-    /* Salva cada dataset separado para não serializar tudo de uma vez */
-    st.put(JSON.stringify(S.pc),'pc');
-    st.put(JSON.stringify(S.sc),'sc');
-    st.put(JSON.stringify(S.est),'est');
+  try{
+    /* Comprimir em paralelo */
+    const [pcBlob,scBlob,estBlob]=await Promise.all([
+      comprimirJSON(S.pc),
+      comprimirJSON(S.sc),
+      comprimirJSON(S.est),
+    ]);
+    const db=await abrirDB();
+    const store=S.est.length>10000?'blobs':'dados'; /* blobs para datasets grandes */
+    const tx=db.transaction([store,'dados'],'readwrite');
+    tx.objectStore(store).put(pcBlob,'pc');
+    tx.objectStore(store).put(scBlob,'sc');
+    tx.objectStore(store).put(estBlob,'est');
+    tx.objectStore('dados').put(ts,'ts');
+    tx.objectStore('dados').put(store,'store_key'); /* salvar qual store foi usado */
     tx.oncomplete=function(){
-      /* Atualiza indicador de sync */
-      const el=document.getElementById('sync-ts');
-      if(el) el.textContent='Salvo às '+ts;
-      /* Fallback localStorage apenas para metadados pequenos */
+      setSyncStatus('✓ Salvo às '+ts);
       try{localStorage.setItem('mcp_ts',ts);}catch(_){}
     };
-    tx.onerror=function(){
-      /* Fallback para localStorage se IndexedDB falhar */
-      try{
-        localStorage.setItem('mcp_pc',JSON.stringify(S.pc));
-        localStorage.setItem('mcp_sc',JSON.stringify(S.sc));
-        localStorage.setItem('mcp_est',JSON.stringify(S.est));
-      }catch(_){}
-    };
-  }).catch(function(){
+    tx.onerror=function(){ setSyncStatus('⚠ Erro ao salvar'); };
+  }catch(err){
+    console.error('Save error:',err);
+    /* Fallback: localStorage com JSON puro (pode falhar em datasets grandes) */
     try{
       localStorage.setItem('mcp_pc',JSON.stringify(S.pc));
       localStorage.setItem('mcp_sc',JSON.stringify(S.sc));
       localStorage.setItem('mcp_est',JSON.stringify(S.est));
-    }catch(_){}
-  });
+      setSyncStatus('✓ Salvo às '+ts);
+    }catch(_){ setSyncStatus('⚠ Dataset muito grande para armazenamento local'); }
+  }
 }
 
-function carregar(){
-  return abrirDB().then(function(db){
-    return new Promise(function(res){
+function setSyncStatus(msg){
+  const el=document.getElementById('sync-ts');
+  if(el) el.textContent=msg;
+}
+
+async function carregar(){
+  try{
+    const db=await abrirDB();
+    /* Descobrir em qual store os dados foram salvos */
+    const storeKey=await new Promise(function(res){
       const tx=db.transaction('dados','readonly');
-      const st=tx.objectStore('dados');
-      let pendentes=3;
-      function done(){ pendentes--; if(pendentes===0) res(); }
-      const rp=st.get('pc'); rp.onsuccess=function(){ if(rp.result) try{S.pc=JSON.parse(rp.result);}catch(_){} done(); }; rp.onerror=done;
-      const rs=st.get('sc'); rs.onsuccess=function(){ if(rs.result) try{S.sc=JSON.parse(rs.result);}catch(_){} done(); }; rs.onerror=done;
-      const re=st.get('est'); re.onsuccess=function(){ if(re.result) try{S.est=JSON.parse(re.result);}catch(_){} done(); }; re.onerror=done;
+      const r=tx.objectStore('dados').get('store_key');
+      r.onsuccess=function(){res(r.result||'dados');};
+      r.onerror=function(){res('dados');};
     });
-  }).catch(function(){
-    /* Fallback localStorage */
+    const store=storeKey==='blobs'&&db.objectStoreNames.contains('blobs')?'blobs':'dados';
+    await new Promise(function(res){
+      const tx=db.transaction([store,'dados'],'readonly');
+      let pendentes=4;
+      function done(){pendentes--;if(pendentes===0)res();}
+      const rp=tx.objectStore(store).get('pc');
+      rp.onsuccess=function(){if(rp.result)descomprimirJSON(rp.result).then(function(d){S.pc=d||[];done();}).catch(done);else done();};
+      rp.onerror=done;
+      const rs=tx.objectStore(store).get('sc');
+      rs.onsuccess=function(){if(rs.result)descomprimirJSON(rs.result).then(function(d){S.sc=d||[];done();}).catch(done);else done();};
+      rs.onerror=done;
+      const re=tx.objectStore(store).get('est');
+      re.onsuccess=function(){if(re.result)descomprimirJSON(re.result).then(function(d){S.est=d||[];done();}).catch(done);else done();};
+      re.onerror=done;
+      const rt=tx.objectStore('dados').get('ts');
+      rt.onsuccess=function(){if(rt.result)setSyncStatus('✓ Salvo às '+rt.result);done();};
+      rt.onerror=done;
+    });
+  }catch(err){
+    console.warn('IndexedDB load error, trying localStorage:',err);
     try{
       const p=localStorage.getItem('mcp_pc'),s=localStorage.getItem('mcp_sc'),e=localStorage.getItem('mcp_est');
       if(p)S.pc=JSON.parse(p); if(s)S.sc=JSON.parse(s); if(e)S.est=JSON.parse(e);
+      const ts=localStorage.getItem('mcp_ts'); if(ts) setSyncStatus('✓ Salvo às '+ts);
     }catch(_){}
-  });
+  }
 }
 
 function limpar(){
@@ -1746,10 +1887,22 @@ function limpar(){
   abrirDB().then(function(db){
     const tx=db.transaction('dados','readwrite');
     const st=tx.objectStore('dados');
-    st.delete('pc');st.delete('sc');st.delete('est');
+    st.delete('pc');st.delete('sc');st.delete('est');st.delete('ts');
   }).catch(function(){});
-  ['mcp_pc','mcp_sc','mcp_est'].forEach(function(k){try{localStorage.removeItem(k);}catch(_){}});
+  ['mcp_pc','mcp_sc','mcp_est','mcp_ts'].forEach(function(k){try{localStorage.removeItem(k);}catch(_){}});
+  setSyncStatus('Pronto');
   render();toast('Dados limpos com sucesso.','info');
+}
+
+function salvarManual(){
+  if(!S.pc.length&&!S.sc.length&&!S.est.length){toast('Nenhum dado para salvar.','info');return;}
+  const btn=document.getElementById('btn-save');
+  if(btn){btn.disabled=true;btn.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Salvando…';}
+  _salvarAgora();
+  setTimeout(function(){
+    if(btn){btn.disabled=false;btn.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Salvar';}
+    toast('💾 Dados salvos com sucesso!','success');
+  },1200);
 }
 
 // ═══════════════════════════════════════════════
