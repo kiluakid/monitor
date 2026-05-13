@@ -579,7 +579,7 @@ function buildIdx(arr,fields){
 }
 function rebuildIdxPC(){ S.idx.pc=buildIdx(S.pc,['C7_NUM','C7_PRODUTO','C7_DESCRI','C7_FORNECE','C7_CC','C7_CLASSEVALOR','C7_SOLICIT','C7_COMPRADOR','C7_FILIAL']); }
 function rebuildIdxSC(){ S.idx.sc=buildIdx(S.sc,['C1_NUM','C1_PRODUTO','C1_DESCRI','C1_CC','C1_SOLICIT','C1_PEDIDO','C1_GRUPO','C1_FILIAL']); }
-function rebuildIdxEst(){ S.idx.est=buildIdx(S.est,['B1_COD','B1_DESC','B1_GRUPO','B1_UM','B1_FILIAL']); }
+function rebuildIdxEst(){ S.idx.est=buildIdx(S.est,['B1_COD','B1_DESC','B1_DESC_CIEN','B1_GRUPO','B1_UM','B1_FILIAL','B1_CLASSE','B1_TIPO','B1_CL']); }
 
 // ═══════════════════════════════════════════════
 // DEMO — campos reais Protheus
@@ -1031,34 +1031,51 @@ function getFEst(){
   const b=S.f.busca.toLowerCase();
   const idx=S.idx.est;
   let d=S.est.filter(function(x,i){
-    if(S.f.filial!=='todos'&&x.B1_FILIAL!==S.f.filial) return false;
+    if(S.f.filial&&S.f.filial!=='todos'&&x.B1_FILIAL!==S.f.filial) return false;
     if(S.f.status==='critico'&&(+x.DISPONIVEL||0)>0) return false;
-    if(S.f.status==='baixo'&&!((+x.DISPONIVEL||0)>0&&(+x.DISPONIVEL||0)<=(+x.B2_QATU||0)*.2)) return false;
+    if(S.f.status==='baixo'){
+      const disp=+x.DISPONIVEL||0,qatu=+x.B2_QATU||0;
+      if(!(disp>0&&disp<=qatu*.2)) return false;
+    }
     if(b&&!(idx[i]||'').includes(b)) return false;
     return true;
   });
-  if(S.sort.campo) d.sort((a,b)=>{const av=a[S.sort.campo],bv=b[S.sort.campo];return(isNaN(av)||isNaN(bv)?String(av||'').localeCompare(String(bv||''),'pt'):(+av)-(+bv))*S.sort.dir;});
+  if(S.sort.campo){
+    const c=S.sort.campo,dir=S.sort.dir;
+    d.sort(function(a,b){
+      const av=a[c],bv=b[c];
+      if(isNaN(av)||isNaN(bv)) return String(av||'').localeCompare(String(bv||''),'pt')*dir;
+      return((+av)-(+bv))*dir;
+    });
+  }
   return d;
 }
 
 function rowsEst(d){
-  if(!d.length) return `<tr><td colspan="11"><div class="empty"><div class="empty-i">📦</div><div class="empty-t">Nenhum produto encontrado</div><div class="empty-s">Ajuste os filtros ou importe MATR290</div></div></td></tr>`;
-  return d.map(r=>{
+  if(!d.length) return '<tr><td colspan="15"><div class="empty"><div class="empty-i">📦</div><div class="empty-t">Nenhum produto encontrado</div><div class="empty-s">Ajuste os filtros ou importe MATR290</div></div></td></tr>';
+  return d.map(function(r){
     const disp=+r.DISPONIVEL||0,qatu=+r.B2_QATU||0;
     const pct=qatu>0?disp/qatu:0;
-    const [sit,sc]=disp<=0?['Crítico','br']:pct<.2?['Baixo','ba']:['Normal','bg'];
-    return`<tr>
-      <td class="mn" style="font-size:11px">${r.B1_FILIAL||''}</td>
-      <td class="mn">${r.B1_COD}</td>
-      <td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="${r.B1_DESC}">${r.B1_DESC}</td>
-      <td class="mn">${r.B1_UM||''}</td>
-      <td class="mn">${fmt(r.B2_QATU)}</td>
-      <td class="mn" style="color:var(--amber)">${fmt(r.B2_EMPENHO)}</td>
-      <td class="mn" style="font-weight:600;color:${disp<=0?'var(--red)':pct<.2?'var(--amber)':'var(--green)'}">${fmt(disp)}</td>
-      <td class="mn" style="color:var(--teal)">${fmt(r.B2_SALPEDI)}</td>
-      <td class="mn">R$&nbsp;${fmt(r.B2_CM1)}</td>
-      <td><span class="badge ${sc}">${sit}</span></td>
-    </tr>`;
+    const sit=disp<=0?'Crítico':pct<.2?'Baixo':'Normal';
+    const sc=disp<=0?'br':pct<.2?'ba':'bg';
+    const clr=disp<=0?'var(--red)':pct<.2?'var(--amber)':'var(--green)';
+    return'<tr onclick="vEst(\''+r.B1_FILIAL+'\',\''+r.B1_COD+'\')" style="cursor:pointer">'
+      +'<td class="mn" style="font-size:11px">'+(r.B1_FILIAL||'')+'</td>'
+      +'<td class="mn">'+r.B1_COD+'</td>'
+      +'<td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="'+(r.B1_DESC||'')+'">'+(r.B1_DESC||'')+'</td>'
+      +'<td class="mn">'+(r.B1_UM||'')+'</td>'
+      +'<td class="mn">'+(r.B1_GRUPO||'-')+'</td>'
+      +'<td class="mn" style="font-weight:600">'+fmt(qatu)+'</td>'
+      +'<td class="mn" style="color:var(--amber)">'+fmt(+r.B2_EMPENHO||0)+'</td>'
+      +'<td class="mn" style="font-weight:700;color:'+clr+'">'+fmt(disp)+'</td>'
+      +'<td class="mn" style="color:var(--teal)">'+fmt(+r.B2_SCS||0)+'</td>'
+      +'<td class="mn" style="color:var(--accent)">'+fmt(+r.B2_PCS||0)+'</td>'
+      +'<td class="mn" style="color:var(--muted2)">'+fmt(+r.MED_CONSUMO||0)+'</td>'
+      +'<td class="mn">'+fmt(+r.PONTO_PEDIDO||0)+'</td>'
+      +'<td class="mn" style="font-size:11px">'+(r.ULT_SAIDA||'-')+'</td>'
+      +'<td><span class="badge '+sc+'">'+sit+'</span></td>'
+      +'<td><span class="badge bz" style="font-size:9.5px">'+(r.B1_CLASSE||'-')+'</span></td>'
+      +'</tr>';
   }).join('');
 }
 
@@ -1089,12 +1106,17 @@ function rEst(){
       <th onclick="so('B1_COD')">Código ↕</th>
       <th onclick="so('B1_DESC')">Descrição ↕</th>
       <th onclick="so('B1_UM')">UM ↕</th>
+      <th onclick="so('B1_GRUPO')">Grupo ↕</th>
       <th onclick="so('B2_QATU')">Saldo Atual ↕</th>
       <th onclick="so('B2_EMPENHO')">Empenho ↕</th>
       <th onclick="so('DISPONIVEL')">Disponível ↕</th>
-      <th onclick="so('B2_SALPEDI')">PCs Colocados ↕</th>
-      <th onclick="so('B2_CM1')">Custo Médio ↕</th>
+      <th onclick="so('B2_SCS')">SCs Colocadas ↕</th>
+      <th onclick="so('B2_PCS')">PCs Colocados ↕</th>
+      <th onclick="so('MED_CONSUMO')">Med. Consumo ↕</th>
+      <th onclick="so('PONTO_PEDIDO')">Ponto Pedido ↕</th>
+      <th onclick="so('ULT_SAIDA')">Últ. Saída ↕</th>
       <th>Situação</th>
+      <th onclick="so('B1_CLASSE')">ABC ↕</th>
     </tr></thead>
     <tbody id="tbody-main">${rowsEst(d)}</tbody>
   </table></div>`;
@@ -1103,6 +1125,92 @@ function rEst(){
 // ═══════════════════════════════════════════════
 // MODAIS
 // ═══════════════════════════════════════════════
+function vEst(filial,cod){
+  const r=S.est.find(function(x){return x.B1_FILIAL===filial&&x.B1_COD===cod;});
+  if(!r)return;
+  const disp=+r.DISPONIVEL||0,qatu=+r.B2_QATU||0;
+  const pct=qatu>0?disp/qatu:0;
+  const [sit,sc]=disp<=0?['Crítico','br']:pct<.2?['Baixo','ba']:['Normal','bg'];
+  document.getElementById('mc').innerHTML=`
+    <div class="mh">
+      <div class="mh-t">
+        ${r.B1_COD} — ${r.B1_DESC||''}
+        &nbsp;<span class="badge ${sc}">${sit}</span>
+        ${r.B1_CLASSE?`&nbsp;<span class="badge bz">Classe ${r.B1_CLASSE}</span>`:''}
+      </div>
+      <button class="mclose" onclick="closeM()">×</button>
+    </div>
+    <div class="mb">
+      <div class="mrow">
+        <div class="mf"><div class="fl">Filial</div><div class="fv mn">${r.B1_FILIAL_DESC||r.B1_FILIAL}</div></div>
+        <div class="mf"><div class="fl">Código</div><div class="fv mn">${r.B1_COD}</div></div>
+        <div class="mf"><div class="fl">UM</div><div class="fv mn">${r.B1_UM||''}</div></div>
+        <div class="mf"><div class="fl">Tipo</div><div class="fv mn">${r.B1_TIPO||''}</div></div>
+      </div>
+      <div class="mrow">
+        <div class="mf full"><div class="fl">Descrição</div><div class="fv">${r.B1_DESC||''}</div></div>
+      </div>
+      ${r.B1_DESC_CIEN&&r.B1_DESC_CIEN!==r.B1_DESC?`<div class="mrow"><div class="mf full"><div class="fl">Desc. Científica</div><div class="fv" style="font-size:12px;color:var(--muted2)">${r.B1_DESC_CIEN}</div></div></div>`:''}
+      <div class="mrow">
+        <div class="mf"><div class="fl">Grupo</div><div class="fv mn">${r.B1_GRUPO||'-'}</div></div>
+        <div class="mf"><div class="fl">Classe ABC</div><div class="fv mn">${r.B1_CLASSE||'-'}</div></div>
+        <div class="mf"><div class="fl">CL</div><div class="fv mn">${r.B1_CL||'-'}</div></div>
+        <div class="mf"><div class="fl">Contr. Endereç.</div><div class="fv mn">${r.CONTR_END||'-'}</div></div>
+      </div>
+      <!-- Saldos -->
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;margin-bottom:12px">
+        <div class="fl" style="margin-bottom:10px">SALDOS E MOVIMENTOS</div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
+          <div style="text-align:center">
+            <div style="font-size:10px;color:var(--muted);margin-bottom:4px">Saldo Atual</div>
+            <div style="font-size:20px;font-weight:700;font-family:var(--mono);color:var(--text)">${fmt(qatu)}</div>
+          </div>
+          <div style="text-align:center">
+            <div style="font-size:10px;color:var(--muted);margin-bottom:4px">Empenho</div>
+            <div style="font-size:20px;font-weight:700;font-family:var(--mono);color:var(--amber)">${fmt(+r.B2_EMPENHO||0)}</div>
+          </div>
+          <div style="text-align:center">
+            <div style="font-size:10px;color:var(--muted);margin-bottom:4px">Disponível</div>
+            <div style="font-size:20px;font-weight:700;font-family:var(--mono);color:${disp<=0?'var(--red)':pct<.2?'var(--amber)':'var(--green)'}">${fmt(disp)}</div>
+          </div>
+          <div style="text-align:center">
+            <div style="font-size:10px;color:var(--muted);margin-bottom:4px">Med. Consumo</div>
+            <div style="font-size:20px;font-weight:700;font-family:var(--mono);color:var(--muted2)">${fmt(+r.MED_CONSUMO||0)}</div>
+          </div>
+        </div>
+      </div>
+      <!-- Colocados -->
+      <div class="mrow">
+        <div class="mf"><div class="fl">SCs Colocadas</div><div class="fv mn" style="color:var(--teal)">${fmt(+r.B2_SCS||0)}</div></div>
+        <div class="mf"><div class="fl">PCs Colocados</div><div class="fv mn" style="color:var(--accent)">${fmt(+r.B2_PCS||0)}</div></div>
+        <div class="mf"><div class="fl">OPs Colocadas</div><div class="fv mn">${fmt(+r.B2_OPS||0)}</div></div>
+        <div class="mf"><div class="fl">PVs Colocados</div><div class="fv mn">${fmt(+r.B2_PVS||0)}</div></div>
+      </div>
+      <!-- Planejamento -->
+      <div class="mrow">
+        <div class="mf"><div class="fl">Ponto Pedido</div><div class="fv mn">${fmt(+r.PONTO_PEDIDO||0)}</div></div>
+        <div class="mf"><div class="fl">Lote Econômico</div><div class="fv mn">${fmt(+r.LOTE_ECON||0)}</div></div>
+        <div class="mf"><div class="fl">Prazo Entrega</div><div class="fv mn">${fmt(+r.ENTREGA||0)} dias</div></div>
+        <div class="mf"><div class="fl">Estoque em Meses</div><div class="fv mn">${r.EST_MESES||'-'}</div></div>
+      </div>
+      <div class="mrow">
+        <div class="mf"><div class="fl">Previsão de Entrega</div><div class="fv mn" style="color:var(--accent)">${fmt(+r.PREV_ENTREGA||0)}</div></div>
+        <div class="mf"><div class="fl">Últ. Saída</div><div class="fv mn">${r.ULT_SAIDA||'-'}</div></div>
+        <div class="mf"><div class="fl">Custo Médio</div><div class="fv mn">R$ ${fmt(+r.B2_CM1||0)}</div></div>
+        <div class="mf"><div class="fl">Valor em Estoque</div><div class="fv mn" style="font-weight:700">R$ ${fmt(+r.B2_VATU1||0)}</div></div>
+      </div>
+      ${r.B1_OBS?`<div class="mrow"><div class="mf full"><div class="fl">Observação</div><div class="fv" style="color:var(--amber)">${r.B1_OBS}</div></div></div>`:''}
+    </div>
+    <div class="mfoot">
+      <span style="font-size:12px;color:var(--muted);margin-right:auto">
+        Disponível: <strong style="color:${disp<=0?'var(--red)':pct<.2?'var(--amber)':'var(--green)'}">${fmt(disp)} ${r.B1_UM||''}</strong>
+        &nbsp;·&nbsp;Custo Médio: <strong>R$ ${fmt(+r.B2_CM1||0)}</strong>
+      </span>
+      <button class="btn btn-g" onclick="closeM()">Fechar</button>
+    </div>`;
+  document.getElementById('modal').style.display='flex';
+}
+
 function vPC(num, prod){
   /* Se veio produto específico, mostra detalhe desse item.
      Senão, mostra todos os itens do pedido agrupados. */
@@ -1347,29 +1455,64 @@ function normHdr(h){
   return String(h||'').replace(/_x000D_/g,'').replace(/\r\n|\r|\n/g,' ').replace(/\s+/g,' ').trim();
 }
 
+/* Abas que NÃO contêm dados de produtos — pivot tables e dashboards */
+const ABAS_IGNORAR=['parametros','estoque zerado e prev entrega','dados rápido sc e pc',
+  'tratamento controle de endereç','dados rápidos qnt e end'];
+
+/* Verifica se uma aba tem estrutura de dados de produtos (cabeçalho com Codigo/Filial) */
+function abaTemDados(hdrs){
+  const flat=hdrs.map(function(h){return normHdr(h).toLowerCase();});
+  return flat.some(function(h){return h==='codigo'||h==='filial'||h==='key';});
+}
+
 function lerAbasProtheus(wb){
-  const abas=wb.SheetNames.filter(function(n){return n.toLowerCase()!=='parametros';});
+  const nomes=wb.SheetNames;
+
+  /* Prioridade: usar "Matr290 Geral" se existir (já tem tudo consolidado com Key única) */
+  const abaGeral=nomes.find(function(n){return n.toLowerCase().includes('geral');});
+
+  /* Lista de abas a processar: Geral > filiais individuais */
+  let abas;
+  if(abaGeral){
+    abas=[abaGeral];
+  } else {
+    abas=nomes.filter(function(n){
+      return !ABAS_IGNORAR.some(function(ig){return n.toLowerCase().includes(ig.toLowerCase());});
+    });
+  }
+
   const resultado=[];
   abas.forEach(function(nome){
     const ws=wb.Sheets[nome];
-    /* Amostra das primeiras 4 linhas para detectar hdrIdx (raw:false só aqui para comparar strings) */
-    const amostra=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:false,range:{s:{r:0,c:0},e:{r:3,c:30}}});
+    if(!ws) return;
+
+    /* Amostra: primeiras 3 linhas para detectar hdrIdx */
+    const amostra=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:false,
+      range:{s:{r:0,c:0},e:{r:2,c:30}}});
+    if(!amostra||!amostra.length) return;
+
+    /* Detectar linha do cabeçalho real */
     let hdrIdx=0;
     for(let i=0;i<amostra.length;i++){
-      if(amostra[i].filter(function(c){return c!==''&&c!==null&&c!==undefined;}).length>2){hdrIdx=i;break;}
+      const filled=amostra[i].filter(function(c){return c!==''&&c!==null&&c!==undefined;}).length;
+      if(filled>2){hdrIdx=i;break;}
     }
-    /* raw:true — recebe Date nativo para datas, números como número */
-    const arr=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:true,range:hdrIdx});
+
+    /* Verificar se tem cabeçalho de produto antes de carregar tudo */
+    if(!abaTemDados(amostra[hdrIdx]||[])) return;
+
+    /* Ler planilha completa com raw:true para receber Date nativo */
+    const arr=XLSX.utils.sheet_to_json(ws,{header:1,defval:null,raw:true,range:hdrIdx});
     if(!arr||arr.length<2) return;
-    /* Normalizar cabeçalhos (remove _x000D_ e \r\n do MATR290) */
+
     const hdrs=arr[0].map(normHdr);
+
     for(let i=1;i<arr.length;i++){
       const row=arr[i];
-      /* Pular linhas totalmente vazias */
-      if(!row||row.every(function(c){return c===''||c===null||c===undefined;})) continue;
+      if(!row||row.every(function(c){return c===null||c===undefined||c===''})) continue;
       const obj={__aba__:nome};
       for(let j=0;j<hdrs.length;j++){
-        if(hdrs[j]) obj[hdrs[j]]=row[j]!==undefined?row[j]:'';
+        if(hdrs[j]) obj[hdrs[j]]=row[j]!==null&&row[j]!==undefined?row[j]:'';
       }
       resultado.push(obj);
     }
@@ -1476,7 +1619,8 @@ function finalizarImport(n,tipo){
     toast('✅ '+n.length.toLocaleString('pt-BR')+' linhas MATA110 importadas ('+S.sc.length.toLocaleString('pt-BR')+' total)!','success');
     setTimeout(function(){nav('sc');},700);
   } else {
-    const chave=function(x){return x.B1_FILIAL+'|'+x.B1_COD;};
+    /* Chave: B1_KEY (coluna Key do Matr290 Geral) ou filial+codigo */
+    const chave=function(x){return x.B1_KEY||x.B1_FILIAL+'|'+x.B1_COD;};
     const idx=new Map(S.est.map(function(x){return[chave(x),x];}));
     n.forEach(function(x){idx.set(chave(x),x);});
     S.est=[...idx.values()];
@@ -1488,45 +1632,54 @@ function finalizarImport(n,tipo){
   }
 }
 
-/* fmtData — converte qualquer representação de data do Protheus/SheetJS para DD/MM/YYYY
-   Fontes possíveis com cellDates:true:
-   - objeto Date nativo (SheetJS converte células de data)
-   - string ISO "YYYY-MM-DDTHH:mm:ss.000Z"
-   - string "AAAAMMDD" (formato interno Protheus)
-   - serial numérico Excel (fallback)
-   - DD/MM/YYYY já formatado */
+/* fmtData — converte QUALQUER formato de data para DD/MM/AAAA (padrão brasileiro)
+   Suporta: Date nativo (cellDates:true), ISO string, serial Excel, AAAAMMDD, DD/MM/AAAA */
 function fmtData(v){
   if(v===null||v===undefined||v===''||v==='0'||v===0) return '';
-  /* ── Objeto Date nativo (cellDates:true) ── */
+
+  /* ── 1. Objeto Date nativo do JavaScript (SheetJS cellDates:true) ── */
   if(v instanceof Date){
     if(isNaN(v.getTime())) return '';
-    const d=String(v.getDate()).padStart(2,'0');
-    const m=String(v.getMonth()+1).padStart(2,'0');
-    const y=v.getFullYear();
-    return d+'/'+m+'/'+y;
+    return String(v.getDate()).padStart(2,'0')+'/'
+          +String(v.getMonth()+1).padStart(2,'0')+'/'
+          +v.getFullYear();
   }
+
   const s=String(v).trim();
-  if(!s||s==='0') return '';
-  /* ── ISO com T: "2020-12-15T00:00:00.000Z" ── */
+  if(!s||s==='0'||s==='null'||s==='undefined') return '';
+
+  /* ── 2. ISO com ou sem T: "2024-11-01T00:00:00.000Z" ou "2024-11-01 00:00:00" ── */
   const iso=s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if(iso) return iso[3]+'/'+iso[2]+'/'+iso[1];
-  /* ── Já está DD/MM/YYYY ── */
-  if(/^\d{2}\/\d{2}\/\d{4}$/.test(s)) return s;
-  /* ── Formato interno Protheus AAAAMMDD ── */
-  if(/^\d{8}$/.test(s)){
-    return s.slice(6,8)+'/'+s.slice(4,6)+'/'+s.slice(0,4);
+  if(iso){
+    const y=parseInt(iso[1]),m=parseInt(iso[2]),d=parseInt(iso[3]);
+    if(y>1900&&m>=1&&m<=12&&d>=1&&d<=31)
+      return String(d).padStart(2,'0')+'/'+String(m).padStart(2,'0')+'/'+y;
   }
-  /* ── Serial Excel numérico ── */
+
+  /* ── 3. Já está DD/MM/AAAA ── */
+  if(/^\d{2}\/\d{2}\/\d{4}$/.test(s)) return s;
+
+  /* ── 4. Formato interno Protheus AAAAMMDD (ex: "20241101") ── */
+  if(/^\d{8}$/.test(s)){
+    const y=s.slice(0,4),m=s.slice(4,6),d=s.slice(6,8);
+    if(parseInt(m)>=1&&parseInt(m)<=12&&parseInt(d)>=1&&parseInt(d)<=31)
+      return d+'/'+m+'/'+y;
+  }
+
+  /* ── 5. Serial numérico Excel (ex: 45596) ── */
   const n=parseFloat(s.replace(',','.'));
   if(!isNaN(n)&&n>10000&&n<80000){
-    /* Corrigir bug Excel: 1900 não é bissexto mas Excel conta como tal */
+    /* Bug Excel: considera 1900 bissexto, corrigir para n>60 */
     const adj=n>60?n-1:n;
     const epoch=new Date(1899,11,30);
     epoch.setDate(epoch.getDate()+Math.floor(adj));
-    const d=String(epoch.getDate()).padStart(2,'0');
-    const m=String(epoch.getMonth()+1).padStart(2,'0');
-    return d+'/'+m+'/'+epoch.getFullYear();
+    if(!isNaN(epoch.getTime()))
+      return String(epoch.getDate()).padStart(2,'0')+'/'
+            +String(epoch.getMonth()+1).padStart(2,'0')+'/'
+            +epoch.getFullYear();
   }
+
+  /* ── 6. Retornar como está se não reconheceu ── */
   return s;
 }
 /* Converte data para valor comparável (para ordenação correta) */
@@ -1662,35 +1815,45 @@ function mapSC(rows,offset){
 
 function mapEst(rows,offset){
   return rows.map(function(r,i){
-    /* Filial: vem do campo "Filial" (código curto como "02") ou do nome da aba */
     const filialRaw=mp(r,'Filial','filial','B1_FILIAL','B2_FILIAL')||String(r['__aba__']||'');
     const filial=filialRaw.split('-')[0].trim()||'01';
-    const qatu   =nNum(mp(r,'Saldo Atual','B2_QATU','saldoatual','saldo'));
-    const emp    =nNum(mp(r,'Empenho','B2_EMPENHO','empenho','empenhado'));
-    /* MATR290: cabeçalhos normalizados de "SCs_x000D_
-Colocadas" → "SCs Colocadas" */
-    const scs    =nNum(mp(r,'SCs Colocadas','scscolocadas','sc colocadas','salpedi'));
-    const pcs    =nNum(mp(r,'PCs Colocados','pcscolocados','pc colocados','B2_SALPEDI'));
-    const salpedi=pcs||scs; /* preferir PCs Colocados, fallback SCs */
+    const qatu  =nNum(mp(r,'Saldo Atual','B2_QATU','saldoatual','saldo'));
+    const emp   =nNum(mp(r,'Empenho','B2_EMPENHO','empenho','empenhado'));
+    const scs   =nNum(mp(r,'SCs Colocadas','scscolocadas','sc colocadas'));
+    const pcs   =nNum(mp(r,'PCs Colocados','pcscolocados','pc colocados','B2_SALPEDI'));
+    const ops   =nNum(mp(r,'OPs Colocadas','opscolocadas','op colocadas'));
+    const pvs   =nNum(mp(r,'PVs Colocados','pvscolocados','pv colocados'));
+    const prevEnt=nNum(mp(r,'Previsão entrega','previsaoentrega','previsao entrega'));
     return{
+      B1_KEY       :mp(r,'Key','key')||filial+mp(r,'Codigo','codigo','cod','produto'),
       B1_FILIAL    :filial,
       B1_FILIAL_DESC:filialRaw,
       B1_COD       :mp(r,'Codigo','B1_COD','codigo','cod','produto')||'PROD'+String(offset+i+1).padStart(4,'0'),
-      B1_DESC      :mp(r,'Descricao','Desc. Cientifica','B1_DESC','descricao','desc'),
+      B1_DESC      :mp(r,'Descricao','B1_DESC','descricao','desc'),
+      B1_DESC_CIEN :mp(r,'Desc. Cientifica','desccientifica','desc cientifica'),
       B1_UM        :mp(r,'UM','B1_UM','um','unidade')||'UN',
       B1_TIPO      :mp(r,'Tp','B1_TIPO','tipo')||'MC',
       B1_GRUPO     :mp(r,'Grupo','grupo','B1_GRUPO'),
       B1_CLASSE    :mp(r,'Classe ABC','classeabc','classe'),
-      B2_LOCAL     :mp(r,'B2_LOCAL','local','armazem','arm')||'01',
+      B1_CL        :mp(r,'CL','cl'),
+      B1_OBS       :mp(r,'obs','observacao'),
       B2_QATU      :qatu,
       B2_EMPENHO   :emp,
-      B2_SALPEDI   :salpedi,
       B2_SCS       :scs,
-      B2_CM1       :nNum(mp(r,'B2_CM1','cm1','custo medio')),
-      B2_VATU1     :nNum(mp(r,'B2_VATU1','vatu1','valor atual','valor estoque')),
-      MED_CONSUMO  :nNum(mp(r,'Med. Consumo','medconsumo','consumo medio')),
-      ULT_SAIDA    :fmtData(mp(r,'DT.Ult.Saida','dtultsaida','ultima saida')),
+      B2_PCS       :pcs,
+      B2_OPS       :ops,
+      B2_PVS       :pvs,
       DISPONIVEL   :+(qatu-emp).toFixed(4)*1,
+      PONTO_PEDIDO :nNum(mp(r,'Ponto Pedido','pontopedido','ponto de pedido')),
+      LOTE_ECON    :nNum(mp(r,'Lote Econom.','loteecon','lote economico')),
+      ENTREGA      :nNum(mp(r,'Entrega','entrega','prazo entrega')),
+      EST_MESES    :mp(r,'Estoque em Meses','estoqueemmeses','estoque meses'),
+      MED_CONSUMO  :nNum(mp(r,'Med. Consumo','medconsumo','consumo medio')),
+      PREV_ENTREGA :prevEnt,
+      ULT_SAIDA    :fmtData(r['DT.Ult.Saida']!==undefined?r['DT.Ult.Saida']:mp(r,'DT.Ult.Saida','dtultsaida','ultima saida')),
+      CONTR_END    :mp(r,'Contr.Endere','contrend','controle endereco'),
+      B2_CM1       :nNum(mp(r,'B2_CM1','cm1','custo medio','custo med')),
+      B2_VATU1     :nNum(mp(r,'B2_VATU1','vatu1','valor atual','valor estoque')),
     };
   });
 }
@@ -1801,7 +1964,7 @@ function salvar(){
   _saveTimer=setTimeout(_salvarAgora,800);
 }
 
-/* _salvarAgora — usa compressão gzip para datasets grandes e IndexedDB para armazenamento ilimitado */
+/* _salvarAgora — usa compressão gzip + IndexedDB; retorna Promise para encadeamento */
 async function _salvarAgora(){
   clearTimeout(_saveTimer);
   setSyncStatus('💾 Salvando…');
@@ -1844,9 +2007,9 @@ function setSyncStatus(msg){
 }
 
 async function carregar(){
+  /* 1ª tentativa: IndexedDB (suporta datasets grandes comprimidos) */
   try{
     const db=await abrirDB();
-    /* Descobrir em qual store os dados foram salvos */
     const storeKey=await new Promise(function(res){
       const tx=db.transaction('dados','readonly');
       const r=tx.objectStore('dados').get('store_key');
@@ -1854,31 +2017,53 @@ async function carregar(){
       r.onerror=function(){res('dados');};
     });
     const store=storeKey==='blobs'&&db.objectStoreNames.contains('blobs')?'blobs':'dados';
-    await new Promise(function(res){
-      const tx=db.transaction([store,'dados'],'readonly');
+    await new Promise(function(res,rej){
+      const stores=store==='blobs'?[store,'dados']:[store];
+      const tx=db.transaction(stores,'readonly');
       let pendentes=4;
       function done(){pendentes--;if(pendentes===0)res();}
       const rp=tx.objectStore(store).get('pc');
-      rp.onsuccess=function(){if(rp.result)descomprimirJSON(rp.result).then(function(d){S.pc=d||[];done();}).catch(done);else done();};
-      rp.onerror=done;
+      rp.onsuccess=function(){
+        if(rp.result) descomprimirJSON(rp.result).then(function(d){if(d&&d.length)S.pc=d;done();}).catch(done);
+        else done();
+      }; rp.onerror=done;
       const rs=tx.objectStore(store).get('sc');
-      rs.onsuccess=function(){if(rs.result)descomprimirJSON(rs.result).then(function(d){S.sc=d||[];done();}).catch(done);else done();};
-      rs.onerror=done;
+      rs.onsuccess=function(){
+        if(rs.result) descomprimirJSON(rs.result).then(function(d){if(d&&d.length)S.sc=d;done();}).catch(done);
+        else done();
+      }; rs.onerror=done;
       const re=tx.objectStore(store).get('est');
-      re.onsuccess=function(){if(re.result)descomprimirJSON(re.result).then(function(d){S.est=d||[];done();}).catch(done);else done();};
-      re.onerror=done;
-      const rt=tx.objectStore('dados').get('ts');
+      re.onsuccess=function(){
+        if(re.result) descomprimirJSON(re.result).then(function(d){if(d&&d.length)S.est=d;done();}).catch(done);
+        else done();
+      }; re.onerror=done;
+      /* Timestamp sempre vem da store 'dados' */
+      const rtx=db.transaction('dados','readonly');
+      const rt=rtx.objectStore('dados').get('ts');
       rt.onsuccess=function(){if(rt.result)setSyncStatus('✓ Salvo às '+rt.result);done();};
       rt.onerror=done;
     });
+    /* Se IndexedDB estava vazio, tentar localStorage como backup */
+    if(!S.pc.length&&!S.sc.length&&!S.est.length){
+      _carregarLocalStorage();
+    }
   }catch(err){
-    console.warn('IndexedDB load error, trying localStorage:',err);
-    try{
-      const p=localStorage.getItem('mcp_pc'),s=localStorage.getItem('mcp_sc'),e=localStorage.getItem('mcp_est');
-      if(p)S.pc=JSON.parse(p); if(s)S.sc=JSON.parse(s); if(e)S.est=JSON.parse(e);
-      const ts=localStorage.getItem('mcp_ts'); if(ts) setSyncStatus('✓ Salvo às '+ts);
-    }catch(_){}
+    console.warn('IndexedDB falhou, carregando localStorage:',err);
+    _carregarLocalStorage();
   }
+}
+
+function _carregarLocalStorage(){
+  try{
+    const p=localStorage.getItem('mcp_pc');
+    const s=localStorage.getItem('mcp_sc');
+    const e=localStorage.getItem('mcp_est');
+    if(p&&p!=='[]') S.pc=JSON.parse(p);
+    if(s&&s!=='[]') S.sc=JSON.parse(s);
+    if(e&&e!=='[]') S.est=JSON.parse(e);
+    const ts=localStorage.getItem('mcp_ts');
+    if(ts) setSyncStatus('✓ Salvo às '+ts);
+  }catch(_){}
 }
 
 function limpar(){
@@ -1895,14 +2080,23 @@ function limpar(){
 }
 
 function salvarManual(){
-  if(!S.pc.length&&!S.sc.length&&!S.est.length){toast('Nenhum dado para salvar.','info');return;}
+  if(!S.pc.length&&!S.sc.length&&!S.est.length){
+    toast('Nenhum dado para salvar.','info');return;
+  }
   const btn=document.getElementById('btn-save');
-  if(btn){btn.disabled=true;btn.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Salvando…';}
-  _salvarAgora();
-  setTimeout(function(){
-    if(btn){btn.disabled=false;btn.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Salvar';}
-    toast('💾 Dados salvos com sucesso!','success');
-  },1200);
+  const SVG_SAVE='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>';
+  if(btn){
+    btn.disabled=true;
+    btn.innerHTML=SVG_SAVE+'Salvando…';
+  }
+  setSyncStatus('💾 Salvando…');
+  _salvarAgora().then(function(){
+    if(btn){btn.disabled=false;btn.innerHTML=SVG_SAVE+'Salvar';}
+    toast('💾 Dados salvos! Ao reabrir o monitor, seus dados estarão aqui.','success');
+  }).catch(function(){
+    if(btn){btn.disabled=false;btn.innerHTML=SVG_SAVE+'Salvar';}
+    toast('⚠️ Erro ao salvar. Tente novamente.','error');
+  });
 }
 
 // ═══════════════════════════════════════════════
@@ -1940,20 +2134,39 @@ function bindDrop(){
 // ═══════════════════════════════════════════════
 /* Init assíncrono: carrega IndexedDB antes de renderizar */
 carregar().then(function(){
-  /* Reconstrói índices de busca após carregar */
   if(S.pc.length) rebuildIdxPC();
   if(S.sc.length) rebuildIdxSC();
   if(S.est.length) rebuildIdxEst();
   if(!S.pc.length&&!S.sc.length&&!S.est.length) gerarDemo();
   updBadges();
   render();
-  /* Mostrar timestamp do último save */
-  const ts=localStorage.getItem('mcp_ts');
-  if(ts){const el=document.getElementById('sync-ts');if(el)el.textContent='Salvo às '+ts;}
 }).catch(function(){
   gerarDemo();
   updBadges();
   render();
+});
+
+/* ── Salvar automaticamente ao sair ou trocar de aba ──────────────────────
+   beforeunload: dispara quando o usuário fecha ou navega para fora
+   visibilitychange: dispara quando minimiza ou troca de aba
+   Garante que NENHUM dado seja perdido ao fechar o monitor */
+window.addEventListener('beforeunload', function(){
+  /* Salvar síncrono via localStorage como seguro de emergência */
+  try{
+    if(S.pc.length)  localStorage.setItem('mcp_pc',  JSON.stringify(S.pc));
+    if(S.sc.length)  localStorage.setItem('mcp_sc',  JSON.stringify(S.sc));
+    if(S.est.length) localStorage.setItem('mcp_est', JSON.stringify(S.est));
+    localStorage.setItem('mcp_ts', new Date().toLocaleTimeString('pt-BR'));
+  }catch(_){}
+  /* IndexedDB assíncrono também é disparado — pode ou não completar antes do unload */
+  _salvarAgora();
+});
+
+document.addEventListener('visibilitychange', function(){
+  /* Quando o usuário minimiza ou troca de aba — salvar no IndexedDB */
+  if(document.visibilityState==='hidden'){
+    _salvarAgora();
+  }
 });
 </script>
 </body>
