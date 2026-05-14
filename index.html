@@ -737,7 +737,7 @@ function render(){
   if(S.pg==='dashboard') c.innerHTML=rDash();
   else if(S.pg==='pedidos') c.innerHTML=rPC();
   else if(S.pg==='sc') c.innerHTML=rSC();
-  else if(S.pg==='estoque') c.innerHTML=rEst();
+  else if(S.pg==='estoque'){ c.innerHTML=rEst(); bindEstClick(); }
   else if(S.pg==='importar') c.innerHTML=rImp();
   else if(S.pg==='ajuda') c.innerHTML=rAjuda();
   bindDrop();
@@ -770,10 +770,10 @@ function _doRenderTabela(){
   } else if(S.pg==='estoque'){
     const d=getFEst();
     if(cnt) cnt.textContent=d.length+' / '+S.est.length;
-    // Virtual scroll: renderiza só os primeiros VPAGE itens + placeholder de altura
     S.vs.est._data=d;
     S.vs.est.start=0;
     renderVEst();
+    bindEstClick();
   }
 }
 
@@ -782,14 +782,15 @@ function renderVEst(){
   if(!tb)return;
   const d=S.vs.est._data||[];
   const start=S.vs.est.start||0;
-  const slice=d.slice(start, start+VPAGE);
+  const slice=d.slice(start,start+VPAGE);
   const before=start*VROW_H;
   const after=Math.max(0,(d.length-start-VPAGE))*VROW_H;
   let html='';
-  if(before>0) html+=`<tr style="height:${before}px"><td colspan="10"></td></tr>`;
+  if(before>0) html+='<tr style="height:'+before+'px"><td colspan="15"></td></tr>';
   html+=rowsEst(slice);
-  if(after>0) html+=`<tr style="height:${after}px;background:transparent"><td colspan="10"></td></tr>`;
+  if(after>0) html+='<tr style="height:'+after+'px;background:transparent"><td colspan="15"></td></tr>';
   tb.innerHTML=html;
+  bindEstClick();
 }
 
 // ═══════════════════════════════════════════════
@@ -1062,16 +1063,19 @@ function getFEst(){
 
 function rowsEst(d){
   if(!d.length) return '<tr><td colspan="15"><div class="empty"><div class="empty-i">📦</div><div class="empty-t">Nenhum produto encontrado</div><div class="empty-s">Ajuste os filtros ou importe MATR290</div></div></td></tr>';
-  return d.map(function(r){
+  return d.map(function(r,i){
     const disp=+r.DISPONIVEL||0,qatu=+r.B2_QATU||0;
     const pct=qatu>0?disp/qatu:0;
     const sit=disp<=0?'Crítico':pct<.2?'Baixo':'Normal';
-    const sc=disp<=0?'br':pct<.2?'ba':'bg';
+    const sc =disp<=0?'br'    :pct<.2?'ba'   :'bg';
     const clr=disp<=0?'var(--red)':pct<.2?'var(--amber)':'var(--green)';
-    return'<tr onclick="vEst(\''+r.B1_FILIAL+'\',\''+r.B1_COD+'\')" style="cursor:pointer">'
+    const pp =+r.PONTO_PEDIDO||0;
+    const ppClr=pp>0?'color:var(--accent);font-weight:600':'color:var(--muted)';
+    /* Usar data-idx para evitar quebra por aspas/caracteres especiais no cod */
+    return '<tr class="est-row" data-filial="'+encodeURIComponent(r.B1_FILIAL||'')+'" data-cod="'+encodeURIComponent(r.B1_COD||'')+'" style="cursor:pointer">'
       +'<td class="mn" style="font-size:11px">'+(r.B1_FILIAL||'')+'</td>'
-      +'<td class="mn">'+r.B1_COD+'</td>'
-      +'<td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="'+(r.B1_DESC||'')+'">'+(r.B1_DESC||'')+'</td>'
+      +'<td class="mn" style="font-weight:600">'+(r.B1_COD||'')+'</td>'
+      +'<td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="'+(r.B1_DESC||'')+'">'+(r.B1_DESC||'')+'</td>'
       +'<td class="mn">'+(r.B1_UM||'')+'</td>'
       +'<td class="mn">'+(r.B1_GRUPO||'-')+'</td>'
       +'<td class="mn" style="font-weight:600">'+fmt(qatu)+'</td>'
@@ -1080,14 +1084,27 @@ function rowsEst(d){
       +'<td class="mn" style="color:var(--teal)">'+fmt(+r.B2_SCS||0)+'</td>'
       +'<td class="mn" style="color:var(--accent)">'+fmt(+r.B2_PCS||0)+'</td>'
       +'<td class="mn" style="color:var(--muted2)">'+fmt(+r.MED_CONSUMO||0)+'</td>'
-      +'<td class="mn" style="'+(((+r.PONTO_PEDIDO||0)>0)?'color:var(--accent);font-weight:600':'')+'">'
-      +((+r.PONTO_PEDIDO||0)>0?fmt(+r.PONTO_PEDIDO):'-')
-      +'</td>'
+      +'<td class="mn" style="'+ppClr+'">'+(pp>0?fmt(pp):'-')+'</td>'
       +'<td class="mn" style="font-size:11px">'+(r.ULT_SAIDA||'-')+'</td>'
       +'<td><span class="badge '+sc+'">'+sit+'</span></td>'
       +'<td><span class="badge bz" style="font-size:9.5px">'+(r.B1_CLASSE||'-')+'</span></td>'
       +'</tr>';
   }).join('');
+}
+
+/* Delegação de evento no container fixo #tw-est (nunca recriado, só o tbody muda).
+   Registra uma única vez — cliques em qualquer linha .est-row abrem o modal. */
+function bindEstClick(){
+  const wrap=document.getElementById('tw-est');
+  if(!wrap||wrap._estBound) return;
+  wrap._estBound=true;
+  wrap.addEventListener('click',function(e){
+    const tr=e.target.closest('tr.est-row');
+    if(!tr) return;
+    const filial=decodeURIComponent(tr.dataset.filial||'');
+    const cod   =decodeURIComponent(tr.dataset.cod||'');
+    vEst(filial,cod);
+  });
 }
 
 function rEst(){
