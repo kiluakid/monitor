@@ -500,6 +500,7 @@ input[type=file]{display:none;}
 self.onmessage = function(e) {
   try {
     const type = e.data.type;
+    const importType = e.data.importType; // 'pc', 'sc', ou 'est'
     let resultado = [];
     
     // Tratamento de Datas Centralizado
@@ -561,9 +562,28 @@ self.onmessage = function(e) {
       }
 
       const nomes = wb.SheetNames;
-      const abaGeral = nomes.find(n => n.toLowerCase().includes('geral'));
-      const ABAS_IGNORAR = ['parametros','estoque zerado e prev entrega','dados rápido sc e pc','tratamento controle de endereç','dados rápidos qnt e end'];
-      let abas = abaGeral ? [abaGeral] : nomes.filter(n => !ABAS_IGNORAR.some(ig => n.toLowerCase().includes(ig.toLowerCase())));
+      let abas = [];
+
+      // SE FOR MATR290, FORÇAR O USO DA ABA "MATR290 GERAL"
+      if (importType === 'est') {
+         const nomeLimpo = n => n.toLowerCase().replace(/\s+/g, '');
+         // Procura exatamente por "matr290 geral"
+         const abaMatr290 = nomes.find(n => nomeLimpo(n).includes('matr290geral'));
+         // Fallback se não encontrar o nome exato mas tiver uma aba "geral"
+         const abaGeral = nomes.find(n => n.toLowerCase().includes('geral'));
+         
+         const abaAlvo = abaMatr290 || abaGeral;
+         
+         if (abaAlvo) {
+             abas = [abaAlvo];
+         } else {
+             throw new Error("Aba 'matr290 geral' não encontrada no arquivo Excel enviado.");
+         }
+      } else {
+         const ABAS_IGNORAR = ['parametros','estoque zerado e prev entrega','dados rápido sc e pc','tratamento controle de endereç','dados rápidos qnt e end'];
+         const abaGeral = nomes.find(n => n.toLowerCase().includes('geral'));
+         abas = abaGeral ? [abaGeral] : nomes.filter(n => !ABAS_IGNORAR.some(ig => n.toLowerCase().includes(ig.toLowerCase())));
+      }
 
       for (const nome of abas) {
         const ws = wb.Sheets[nome];
@@ -778,7 +798,6 @@ function _doRenderTabela(){
     tb.innerHTML=rowsSC(d);
   } else if(S.pg==='estoque'){
     const d=getFEst();
-    // Como filtramos por Aba (Filial), o total agora é baseado no subset da filial
     const filialTotal = S.est.filter(x => x.B1_FILIAL === S.f.filial_aba).length;
     if(cnt) cnt.textContent=d.length+' / '+filialTotal;
     S.vs.est._data=d;
@@ -791,7 +810,7 @@ function _doRenderTabela(){
 // ROLAGEM VIRTUAL - ULTRA RÁPIDA (Otimizada)
 // ═══════════════════════════════════════════════
 const VROW_H=36;
-const VPAGE=100; // Carrega 100 itens para rolagem suave
+const VPAGE=100;
 
 function renderVEst(){
   const tb=document.getElementById('tbody-main');
@@ -1123,7 +1142,6 @@ function getFEst(){
   const idx=S.idx.est;
   const d=[];
   
-  // Strict Filial Filtering for the Tabs
   for(let i=0; i<S.est.length; i++) {
     const x = S.est[i];
     
@@ -1635,9 +1653,9 @@ function procFileObj(file, tipo){
     };
 
     if(isCSV){
-      worker.postMessage({ type: 'csv', text: e.target.result });
+      worker.postMessage({ type: 'csv', text: e.target.result, importType: tipo });
     } else {
-      worker.postMessage({ type: 'xlsx', buffer: e.target.result }, [e.target.result]);
+      worker.postMessage({ type: 'xlsx', buffer: e.target.result, importType: tipo }, [e.target.result]);
     }
   };
   
@@ -1650,7 +1668,7 @@ function procFileObj(file, tipo){
 function processarEmChunks(rows,tipo){
   const total=rows.length;
   const processados=new Array(total);
-  let chunk=2000; // Pedaço menor para evitar congelamento total
+  let chunk=2000; 
   let i=0;
   
   function step(){
@@ -1668,7 +1686,6 @@ function processarEmChunks(rows,tipo){
     
     const elapsed=performance.now()-t0;
     
-    // Motor Adaptativo: Acelera se a máquina for rápida, desacelera se for lenta
     if(elapsed < 10 && chunk < 8000) chunk += 500;
     else if(elapsed > 30 && chunk > 500) chunk -= 500;
     
@@ -1676,7 +1693,7 @@ function processarEmChunks(rows,tipo){
     showProgress('⚙️ Processando... '+i.toLocaleString('pt-BR')+' / '+total.toLocaleString('pt-BR'),pct);
     
     if(i<total){ 
-        setTimeout(step, 15); // Tempo de respiro de 15ms para o DOM não travar
+        setTimeout(step, 15); 
         return; 
     }
     
@@ -1938,7 +1955,6 @@ function limpar(){
 function salvarManual(){ _salvarAgora(); toast('💾 Dados salvos!','success'); }
 function so(campo){if(S.sort.campo===campo)S.sort.dir*=-1;else{S.sort.campo=campo;S.sort.dir=1;}renderTabela(true);}
 
-// Scroll super leve usando aproximação por blocos
 function onScrollEst(el){
   const scrollTop=el.scrollTop;
   const newStart=Math.max(0,Math.floor(scrollTop/36)-15);
