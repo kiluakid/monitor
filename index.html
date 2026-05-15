@@ -481,7 +481,6 @@ input[type=file]{display:none;}
 <body>
 <div class="app">
 
-<!-- SIDEBAR -->
 <aside class="sidebar" id="sidebar">
   <div class="sidebar-logo">
     <div class="logo-mark">
@@ -532,7 +531,6 @@ input[type=file]{display:none;}
   </div>
 </aside>
 
-<!-- MAIN -->
 <div class="main">
   <header class="topbar">
     <button class="hb" onclick="toggleSb()">
@@ -555,7 +553,6 @@ input[type=file]{display:none;}
 </div>
 </div>
 
-<!-- MODAL -->
 <div class="mo" id="modal" style="display:none" onclick="closeM(event)">
   <div class="mc" id="mc"></div>
 </div>
@@ -1533,38 +1530,58 @@ function finalizarImport(n,tipo){
   }
 }
 
-function fmtData(v){
-  if(v===null||v===undefined||v===''||v==='0'||v===0) return '';
-  if(v instanceof Date){
-    if(isNaN(v.getTime())) return '';
-    return String(v.getDate()).padStart(2,'0')+'/'
-          +String(v.getMonth()+1).padStart(2,'0')+'/'
-          +v.getFullYear();
+function fmtData(v) {
+  if (v === null || v === undefined || v === '' || v === '0' || v === 0) return '';
+  if (v instanceof Date) {
+    if (isNaN(v.getTime())) return '';
+    return String(v.getDate()).padStart(2, '0') + '/' 
+         + String(v.getMonth() + 1).padStart(2, '0') + '/' 
+         + String(v.getFullYear()).padStart(4, '0');
   }
-  const s=String(v).trim();
-  if(!s||s==='0'||s==='null'||s==='undefined') return '';
-  const iso=s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if(iso){
-    const y=parseInt(iso[1]),m=parseInt(iso[2]),d=parseInt(iso[3]);
-    if(y>1900&&m>=1&&m<=12&&d>=1&&d<=31)
-      return String(d).padStart(2,'0')+'/'+String(m).padStart(2,'0')+'/'+y;
+  
+  const s = String(v).trim();
+  if (!s || s === '0' || s === 'null' || s === 'undefined') return '';
+
+  // Data do padrão ISO: YYYY-MM-DD
+  let iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) {
+    const y = parseInt(iso[1]), m = parseInt(iso[2]), d = parseInt(iso[3]);
+    if (y > 1900 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return String(d).padStart(2, '0') + '/' + String(m).padStart(2, '0') + '/' + String(y).padStart(4, '0');
+    }
   }
-  if(/^\d{2}\/\d{2}\/\d{4}$/.test(s)) return s;
-  if(/^\d{8}$/.test(s)){
-    const y=s.slice(0,4),m=s.slice(4,6),d=s.slice(6,8);
-    if(parseInt(m)>=1&&parseInt(m)<=12&&parseInt(d)>=1&&parseInt(d)<=31)
-      return d+'/'+m+'/'+y;
+
+  // Formato com barras: DD/MM/YYYY ou D/M/YY
+  let barra = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (barra) {
+    let d = parseInt(barra[1]), m = parseInt(barra[2]), y = parseInt(barra[3]);
+    if (y < 100) y += 2000; // Ajusta anos como "23" para "2023"
+    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return String(d).padStart(2, '0') + '/' + String(m).padStart(2, '0') + '/' + String(y).padStart(4, '0');
+    }
   }
-  const n=parseFloat(s.replace(',','.'));
-  if(!isNaN(n)&&n>10000&&n<80000){
-    const adj=n>60?n-1:n;
-    const epoch=new Date(1899,11,30);
-    epoch.setDate(epoch.getDate()+Math.floor(adj));
-    if(!isNaN(epoch.getTime()))
-      return String(epoch.getDate()).padStart(2,'0')+'/'
-            +String(epoch.getMonth()+1).padStart(2,'0')+'/'
-            +epoch.getFullYear();
+
+  // Formato Protheus direto: YYYYMMDD
+  if (/^\d{8}$/.test(s)) {
+    const y = parseInt(s.slice(0, 4)), m = parseInt(s.slice(4, 6)), d = parseInt(s.slice(6, 8));
+    if (y > 1900 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return String(d).padStart(2, '0') + '/' + String(m).padStart(2, '0') + '/' + String(y).padStart(4, '0');
+    }
   }
+
+  // Número serial do Excel
+  const n = parseFloat(s.replace(',', '.'));
+  if (!isNaN(n) && n > 10000 && n < 80000 && !s.includes('/')) {
+    const adj = n > 60 ? n - 1 : n;
+    const epoch = new Date(1899, 11, 30);
+    epoch.setDate(epoch.getDate() + Math.floor(adj));
+    if (!isNaN(epoch.getTime())) {
+      return String(epoch.getDate()).padStart(2, '0') + '/' 
+           + String(epoch.getMonth() + 1).padStart(2, '0') + '/' 
+           + String(epoch.getFullYear()).padStart(4, '0');
+    }
+  }
+  
   return s;
 }
 
