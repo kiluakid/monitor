@@ -453,17 +453,18 @@ self.onmessage = function(e) {
   try {
     const { type, buffer, text, importType, fileName } = e.data;
     
-    // Extrator de filial com base no nome do arquivo (ex: "matr290.xlsx - STP LOG - FILIAL BARRO ALTO 2.csv" -> "STP LOG - FILIAL BARRO ALTO")
+    // Extrator de filial blindado contra lixo nos nomes
     function extractFilial(name) {
-       if (!name) return '01';
+       if (!name) return '';
        let n = name.replace(/\.csv$/i, '');
-       n = n.replace(/^(matr290|mata110|mata121)\.xlsx\s*-\s*/i, '');
-       n = n.replace(/(-Produ.*|-Pr.*| Produtos.*|\s\d+)$/i, '');
+       // Remove "matr290.xlsx - " ou qualquer variação
+       n = n.replace(/^.*?\.xlsx\s*-\s*/i, '');
+       // Remove as sujeiras do final (-Produ, -Pr, -P, etc, ou números soltos)
+       n = n.replace(/(-Produ.*|-Pr.*|-P.*|\s\d+)$/i, '');
        return n.trim();
     }
     const fileFilial = extractFilial(fileName);
 
-    // FUNÇÕES COMPARTILHADAS
     function fmtData(v) {
       if (!v) return '';
       const s = String(v).trim();
@@ -510,14 +511,13 @@ self.onmessage = function(e) {
     function nStPC(v,quje,qtd){const s=String(v||'').toUpperCase().trim(); if(!s||s==='PENDENTE'||s==='ABERTO')return''; if(s==='E'||s.includes('COTAC'))return'E'; if(s==='P'||s.includes('PARCI'))return'P'; if(s==='A'||s.includes('APROV'))return'A'; if(s==='L'||s.includes('LIBER'))return'L'; if(s==='C'||s.includes('CANCEL'))return'C'; if(qtd>0){if(quje<=0)return'';if(quje>=qtd)return'L';return'P';} return '';}
     function nStSC(v,quantPed,quant){const s=String(v||'').toUpperCase().trim(); if(!s||s==='PENDENTE'||s==='ABERTO')return'P'; if(s==='E'||s.includes('COTAC'))return'E'; if(s==='L'||s.includes('LIBER'))return'L'; if(s==='G'||s.includes('GERO')||s.includes('PEDIDO'))return'G'; if(s==='B'||s.includes('BLOQ'))return'B'; if(s==='R'||s.includes('REJEIT'))return'R'; if(s==='C'||s.includes('CANCEL'))return'C'; if(!v&&quantPed>0)return'G'; return'P';}
 
-    // MAPEAR LINHA DIRETO NO WORKER
     function mapRow(r, tipo, idx, abaClean) {
       if (tipo === 'pc') {
         const um=mp(r,'Unidade','Unid Medida','C7_UM','um');
         const quant=nNum(mp(r,'C7_QUANT','Quantidade','qtd'));
         const quje=nNum(mp(r,'C7_QUJE','Qtd.Entregue','entregue'));
         return {
-          C7_FILIAL: mp(r,'C7_FILIAL','Filial') || abaClean || '01',
+          C7_FILIAL: abaClean || mp(r,'C7_FILIAL','Filial') || '01',
           C7_FILIAL_DESC: abaClean || mp(r,'C7_FILIAL','Filial'),
           C7_NUM: mp(r,'C7_NUM','Numero') || String(idx).padStart(6,'0'),
           C7_ITEM: mp(r,'C7_ITEM','item') || String(idx).padStart(3,'0'),
@@ -541,7 +541,7 @@ self.onmessage = function(e) {
         const quant=nNum(mp(r,'C1_QUANT','Quantidade'));
         const quantPed=nNum(mp(r,'Quant.em Ped','C1_QUJE'));
         return {
-          C1_FILIAL: mp(r,'C1_FILIAL','Filial') || abaClean || '01',
+          C1_FILIAL: abaClean || mp(r,'C1_FILIAL','Filial') || '01',
           C1_FILIAL_DESC: abaClean || mp(r,'C1_FILIAL','Filial'),
           C1_NUM: mp(r,'C1_NUM','Numero da SC') || String(idx).padStart(6,'0'),
           C1_ITEM: mp(r,'C1_ITEM','Item da SC') || String(idx).padStart(4,'0'),
@@ -562,7 +562,6 @@ self.onmessage = function(e) {
           C1_OBS: mp(r,'C1_OBS','obs','observacao')
         };
       } else { 
-        // ESTOQUE - MAPEAR TODOS OS CAMPOS COMPLETOS
         const qatu = nNum(mp(r,'Saldo Atual','B2_QATU'));
         const emp = nNum(mp(r,'Empenho','B2_EMPENHO'));
         return {
@@ -600,7 +599,6 @@ self.onmessage = function(e) {
 
     let globalIndex = 0;
 
-    // LER XLSX
     if (type === 'xlsx') {
       self.postMessage({ status: 'info', msg: 'Lendo arquivo Excel...', pct: 20 });
       importScripts('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
@@ -632,7 +630,7 @@ self.onmessage = function(e) {
         
         if (!arr[hdrIdx]) continue;
         const hdrs = arr[hdrIdx].map(h => String(h||'').replace(/_x000D_/g,'').trim());
-        let abaClean = aba.replace(/(-Produ.*|-Pr.*| Produtos.*|\s\d+)$/i, '').trim();
+        let abaClean = aba.replace(/(-Produ.*|-Pr.*|-P.*| Produtos.*|\s\d+)$/i, '').trim();
 
         for (let i = hdrIdx + 1; i < arr.length; i++) {
           const row = arr[i];
@@ -649,20 +647,17 @@ self.onmessage = function(e) {
 
           if(chunk.length >= 3000) {
             self.postMessage({ status: 'chunk', data: chunk });
-            chunk = []; // Limpa RAM
+            chunk = [];
           }
         }
       }
       if(chunk.length > 0) self.postMessage({ status: 'chunk', data: chunk });
       self.postMessage({ status: 'done' });
 
-    } 
-    // LER CSV (Corrigido para evitar erros de array undefined e extrair a filial)
-    else if (type === 'csv') {
+    } else if (type === 'csv') {
       const lines = text.split(/\r?\n/);
       if (lines.length > 0) {
         const sep = (lines[0].indexOf(';') !== -1) ? ';' : ',';
-        
         let hdrLine = 0;
         for(let i=0; i < Math.min(lines.length, 10); i++){
           if(lines[i].split(sep).filter(c => c.trim()).length > 2) { hdrLine = i; break; }
@@ -777,9 +772,6 @@ self.onmessage = function(e) {
 <div class="tw-wrap" id="toasts"></div>
 
 <script>
-// ═══════════════════════════════════════════════
-// ESTADO
-// ═══════════════════════════════════════════════
 const S = {
   pg:'dashboard', pc:[], sc:[], est:[],
   idx:{pc:[],sc:[],est:[]},
@@ -802,9 +794,6 @@ function updBadges(){
   document.getElementById('be').textContent=S.est.length;
 }
 
-// ═══════════════════════════════════════════════
-// STATUS / TIPO helpers
-// ═══════════════════════════════════════════════
 const LPC={'':'Pendente','P':'Parcial','E':'Em cotação','A':'Aprovado','L':'Liberado','C':'Cancelado'};
 const LSC={'P':'Pendente','E':'Em cotação','L':'Liberada','G':'Gerou pedido','B':'Bloqueada','R':'Rejeitada','C':'Cancelada'};
 const CPC={'':'ba','P':'bt','E':'bb','A':'bb','L':'bg','C':'br'};
@@ -815,9 +804,6 @@ function bsc(s){return`<span class="badge ${CSC[s]||'bz'}">${LSC[s]||s}</span>`;
 function btipo(t){return`<span class="tipo-b ${t==='S'?'td':'te'}">${t==='S'?'DIRETO':'ESTOQUE'}</span>`;}
 function fmt(v){return(+v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});}
 
-// ═══════════════════════════════════════════════
-// NAVEGAÇÃO
-// ═══════════════════════════════════════════════
 const PAGES=['dashboard','pedidos','sc','estoque','importar','ajuda'];
 const TITLES={dashboard:'Dashboard',pedidos:'Pedidos de Compra',sc:'Solicitações SC1',estoque:'Análise de Estoque',importar:'Importar Planilhas',ajuda:'Guia de Uso'};
 const SUBS={pedidos:'MATA121 — SC7',sc:'MATA110 — SC1',estoque:'MATR290 — SB1/SB2'};
@@ -930,9 +916,6 @@ function dataOrd(v){
   return 0;
 }
 
-// ═══════════════════════════════════════════════
-// DASHBOARD
-// ═══════════════════════════════════════════════
 function rDash(){
   const p=S.pc,s=S.sc,e=S.est;
   const abertos=p.filter(x=>x.C7_STATUS===''||x.C7_STATUS==='A').length;
@@ -999,9 +982,6 @@ function rDash(){
   </div>`;
 }
 
-// ═══════════════════════════════════════════════
-// PEDIDOS SC7
-// ═══════════════════════════════════════════════
 function getFPC(){
   const b=S.f.busca.toLowerCase();
   const idx=S.idx.pc;
@@ -1083,9 +1063,6 @@ function rPC(){
   </table></div>`;
 }
 
-// ═══════════════════════════════════════════════
-// SOLICITAÇÕES SC1
-// ═══════════════════════════════════════════════
 function getFSC(){
   const b=S.f.busca.toLowerCase();
   const idx=S.idx.sc;
@@ -1162,9 +1139,6 @@ function rSC(){
   </table></div>`;
 }
 
-// ═══════════════════════════════════════════════
-// ESTOQUE MATR290
-// ═══════════════════════════════════════════════
 function getFEst(){
   const b=S.f.busca.toLowerCase();
   const idx=S.idx.est;
@@ -1271,9 +1245,6 @@ function rEst(){
   </table></div>`;
 }
 
-// ═══════════════════════════════════════════════
-// MODAIS COM TODOS OS DADOS RESTAURADOS
-// ═══════════════════════════════════════════════
 function vEst(filial,cod){
   const r=S.est.find(x=>x.B1_FILIAL===filial&&x.B1_COD===cod);
   if(!r)return;
@@ -1344,7 +1315,6 @@ function vPC(num, prod){
   const r=prod?todos.find(x=>x.C7_PRODUTO===prod)||todos[0]:todos[0];
   const totalPC=todos.reduce((a,b)=>a+(+b.C7_TOTAL||0),0);
   
-  // Tabela completa de itens (Restaurada)
   const itensHTML=todos.length>1?`
     <div style="margin-top:14px">
       <div class="fl" style="margin-bottom:7px">TODOS OS ITENS DESTE PEDIDO (${todos.length})</div>
@@ -1482,7 +1452,7 @@ function rImp(){
     </div>`).join('')}
   </div>
   <div class="info-box" style="margin-top:20px; max-width:100%">
-    <div class="info-box-t">💡 Novo Motor de Importação</div>
+    <div class="info-box-t">💡 Novo Motor de Importação (Para CSV e XLSX)</div>
     <div class="info-box-d">
       Seus arquivos agora são processados em um <strong>núcleo invisível</strong> (Worker). Você pode importar planilhas gigantes sem travar a tela. Além disso, o nome do arquivo MATR290 é limpo automaticamente (ex: "matr290.xlsx - STP LOG - FILIAL BARRO ALTO-Produ.csv" vira apenas "STP LOG - FILIAL BARRO ALTO"), servindo como um <strong>separador perfeito por filial</strong> no painel de estoque.
     </div>
@@ -1510,7 +1480,7 @@ function hideProgress(){
 }
 
 // ═══════════════════════════════════════════════
-// WORKER MANAGER (Lê sem travar a tela e s/ bugs)
+// WORKER MANAGER
 // ═══════════════════════════════════════════════
 function procFileObj(file, tipo){
   if(!file) return;
@@ -1589,6 +1559,18 @@ function finalizarImport(n, tipo){
 }
 
 // ═══════════════════════════════════════════════
+// GUIA
+// ═══════════════════════════════════════════════
+function rAjuda(){
+  return`
+  <div class="sh"><div class="sh-title">Guia Rápido</div></div>
+  <div class="step-grid">
+    <div class="step"><div class="step-n" style="background:#4f7cff18;border:1.5px solid #4f7cff;color:#4f7cff">1</div><div><div class="step-t">Tamanhos Suportados</div><div class="step-d">Você pode jogar os arquivos originais exportados pelo Protheus, até planilhas de 20MB a 50MB. O sistema vai extrair no fundo sem travar sua tela.</div></div></div>
+    <div class="step"><div class="step-n" style="background:#06c9d418;border:1.5px solid #06c9d4;color:#06c9d4">2</div><div><div class="step-t">Filiais Inteligentes</div><div class="step-d">Quando importar o arquivo CSV ou XLSX, o sistema extrai o nome automaticamente (Ex: "TGM - FILIAL BARRO ALTO-Produ" vira apenas "TGM - FILIAL BARRO ALTO"). Use o filtro de filial na tela de estoque para separar perfeitamente.</div></div></div>
+  </div>`;
+}
+
+// ═══════════════════════════════════════════════
 // PERSISTÊNCIA (IndexedDB)
 // ═══════════════════════════════════════════════
 let _db = null, _saveTimer = null;
@@ -1626,7 +1608,7 @@ async function carregar(){
     st.get('ts').onsuccess=(e)=>{if(e.target.result)setSyncStatus('✓ Salvo às '+e.target.result);};
   }catch(_){}
 }
-function limpar(){if(confirm('Limpar todos os dados?')){S.pc=[];S.sc=[];S.est=[];_salvarAgora();render();}}
+function limpar(){if(confirm('Isso vai apagar todos os dados para você recomeçar. Confirmar?')){S.pc=[];S.sc=[];S.est=[];_salvarAgora();render();}}
 function salvarManual(){ _salvarAgora(); toast('💾 Dados salvos!','success'); }
 
 carregar().then(()=>{
