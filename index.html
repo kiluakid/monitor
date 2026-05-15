@@ -523,7 +523,6 @@ self.onmessage = function(e) {
           const vals = lines[i].split(sep).map(v => v.trim().replace(/["']/g, ''));
           const o = {};
           hdrs.forEach((h, j) => {
-            // Aplicar tratamento de data direto no worker se for campo de data
             let val = vals[j] || '';
             if (h.toLowerCase().includes('data') || h.toLowerCase().includes('emissao') || h.toLowerCase().includes('entrega')) {
               val = processarData(val);
@@ -690,7 +689,6 @@ function rebuildIdxPC(){ S.idx.pc=buildIdx(S.pc,['C7_NUM','C7_PRODUTO','C7_DESCR
 function rebuildIdxSC(){ S.idx.sc=buildIdx(S.sc,['C1_NUM','C1_PRODUTO','C1_DESCRI','C1_CC','C1_SOLICIT','C1_PEDIDO','C1_GRUPO','C1_FILIAL']); }
 function rebuildIdxEst(){ S.idx.est=buildIdx(S.est,['B1_COD','B1_DESC','B1_DESC_CIEN','B1_GRUPO','B1_UM','B1_FILIAL','B1_CLASSE','B1_TIPO','B1_CL']); }
 
-
 function updBadges(){
   document.getElementById('bp').textContent=S.pc.length;
   document.getElementById('bsc').textContent=S.sc.length;
@@ -700,18 +698,10 @@ function updBadges(){
 // ═══════════════════════════════════════════════
 // STATUS / TIPO helpers
 // ═══════════════════════════════════════════════
-const LPC={
-  '':'Pendente','P':'Parcial','E':'Em cotação','A':'Aprovado','L':'Liberado','C':'Cancelado',
-};
-const LSC={
-  'P':'Pendente','E':'Em cotação','L':'Liberada','G':'Gerou pedido','B':'Bloqueada','R':'Rejeitada','C':'Cancelada',
-};
-const CPC={
-  '':'ba','P':'bt','E':'bb','A':'bb','L':'bg','C':'br',
-};
-const CSC={
-  'P':'ba','E':'bb','L':'bg','G':'bg','B':'br','R':'br','C':'br',
-};
+const LPC={ '':'Pendente','P':'Parcial','E':'Em cotação','A':'Aprovado','L':'Liberado','C':'Cancelado' };
+const LSC={ 'P':'Pendente','E':'Em cotação','L':'Liberada','G':'Gerou pedido','B':'Bloqueada','R':'Rejeitada','C':'Cancelada' };
+const CPC={ '':'ba','P':'bt','E':'bb','A':'bb','L':'bg','C':'br' };
+const CSC={ 'P':'ba','E':'bb','L':'bg','G':'bg','B':'br','R':'br','C':'br' };
 
 function bpc(s){return`<span class="badge ${CPC[s]||'bz'}">${LPC[s]||s}</span>`;}
 function bsc(s){return`<span class="badge ${CSC[s]||'bz'}">${LSC[s]||s}</span>`;}
@@ -786,7 +776,7 @@ function renderVEst(){
   if(!tb)return;
   const d=S.vs.est._data||[];
   if(!d.length){
-    tb.innerHTML='<tr><td colspan="15"><div class="empty"><div class="empty-i">📦</div><div class="empty-t">Nenhum produto encontrado</div><div class="empty-s">Ajuste os filtros ou importe MATR290</div></div></td></tr>';
+    tb.innerHTML='<tr><td colspan="24"><div class="empty"><div class="empty-i">📦</div><div class="empty-t">Nenhum produto encontrado</div><div class="empty-s">Ajuste os filtros ou importe MATR290</div></div></td></tr>';
     return;
   }
   const start=S.vs.est.start||0;
@@ -794,21 +784,20 @@ function renderVEst(){
   const before=start*VROW_H;
   const after=Math.max(0,(d.length-start-VPAGE))*VROW_H;
   let html='';
-  if(before>0) html+='<tr style="height:'+before+'px"><td colspan="15"></td></tr>';
-  html+=rowsEst(slice);
-  if(after>0) html+='<tr style="height:'+after+'px;background:transparent"><td colspan="15"></td></tr>';
+  if(before>0) html+='<tr style="height:'+before+'px"><td colspan="24"></td></tr>';
+  html+=rowsEst(slice, start, d);
+  if(after>0) html+='<tr style="height:'+after+'px;background:transparent"><td colspan="24"></td></tr>';
   tb.innerHTML=html;
 }
 
 // ═══════════════════════════════════════════════
-// FUNÇÃO DE DATA PARA EXIBIÇÃO (Limpa o Caché)
+// FUNÇÃO DE DATA
 // ═══════════════════════════════════════════════
 function fmtData(v) {
   if (v === null || v === undefined || v === '' || v === '0' || v === 0) return '';
   let dObj = null;
-  if (v instanceof Date) {
-    dObj = v;
-  } else {
+  if (v instanceof Date) { dObj = v; }
+  else {
     const s = String(v).trim();
     if (!s || s === 'null' || s === 'undefined') return '';
     if (/[a-zA-Z]/.test(s) || s.includes('-') || s.includes('T')) {
@@ -822,10 +811,7 @@ function fmtData(v) {
             if (yy < 100) yy += 2000;
             return String(dd).padStart(2,'0') + '/' + String(mm).padStart(2,'0') + '/' + yy;
         }
-        if (/^\d{8}$/.test(s)) {
-            const y = s.slice(0,4), m = s.slice(4,6), d = s.slice(6,8);
-            return d + '/' + m + '/' + y;
-        }
+        if (/^\d{8}$/.test(s)) { return s.slice(6,8) + '/' + s.slice(4,6) + '/' + s.slice(0,4); }
         const n = parseFloat(s.replace(',','.'));
         if (!isNaN(n) && n > 10000 && n < 80000 && !s.includes('/')) {
             const epoch = new Date(1899, 11, 30);
@@ -834,9 +820,7 @@ function fmtData(v) {
         }
     }
   }
-  if (dObj && !isNaN(dObj.getTime())) {
-    return String(dObj.getDate()).padStart(2, '0') + '/' + String(dObj.getMonth() + 1).padStart(2, '0') + '/' + String(dObj.getFullYear());
-  }
+  if (dObj && !isNaN(dObj.getTime())) return String(dObj.getDate()).padStart(2, '0') + '/' + String(dObj.getMonth() + 1).padStart(2, '0') + '/' + String(dObj.getFullYear());
   return String(v);
 }
 
@@ -1113,13 +1097,29 @@ function getFEst(){
       if(isNaN(av)||isNaN(bv)) return String(av||'').localeCompare(String(bv||''),'pt')*dir;
       return((+av)-(+bv))*dir;
     });
+  } else {
+    d.sort((a,b) => {
+       const fA = String(a.B1_FILIAL||'').toLowerCase();
+       const fB = String(b.B1_FILIAL||'').toLowerCase();
+       if(fA === fB) return String(a.B1_COD||'').localeCompare(String(b.B1_COD||''));
+       return fA.localeCompare(fB);
+    });
   }
   return d;
 }
 
-function rowsEst(d){
-  if(!d.length) return '<tr><td colspan="15"><div class="empty"><div class="empty-i">📦</div><div class="empty-t">Nenhum produto encontrado</div><div class="empty-s">Ajuste os filtros ou importe MATR290</div></div></td></tr>';
-  return d.map(function(r){
+function rowsEst(slice, start, fullData){
+  if(!slice.length) return '<tr><td colspan="24"><div class="empty"><div class="empty-i">📦</div><div class="empty-t">Nenhum produto encontrado</div><div class="empty-s">Ajuste os filtros ou importe MATR290</div></div></td></tr>';
+  return slice.map(function(r, i){
+    const absIdx = start + i;
+    const prevR = absIdx > 0 ? fullData[absIdx - 1] : null;
+    let groupHdr = '';
+    
+    // Header visual por filial
+    if(S.f.filial === 'todos' && (!prevR || prevR.B1_FILIAL !== r.B1_FILIAL)) {
+        groupHdr = `<tr style="background:var(--surface3);border-top:2px solid var(--border2)"><td colspan="24" style="padding:10px 14px;font-weight:700;color:var(--accent);font-size:12px;text-transform:uppercase;letter-spacing:.05em;position:sticky;left:0">🏢 Filial: ${r.B1_FILIAL||'Sem Filial'}</td></tr>`;
+    }
+
     const disp=+r.DISPONIVEL||0,qatu=+r.B2_QATU||0;
     const pct=qatu>0?disp/qatu:0;
     const sit=disp<=0?'Crítico':pct<.2?'Baixo':'Normal';
@@ -1127,22 +1127,32 @@ function rowsEst(d){
     const clr=disp<=0?'var(--red)':pct<.2?'var(--amber)':'var(--green)';
     const pp =+r.PONTO_PEDIDO||0;
     const ppClr=pp>0?'color:var(--accent);font-weight:600':'color:var(--muted)';
-    return '<tr class="est-row" data-filial="'+encodeURIComponent(r.B1_FILIAL||'')+'" data-cod="'+encodeURIComponent(r.B1_COD||'')+'" style="cursor:pointer">'
+    
+    return groupHdr + '<tr class="est-row" data-filial="'+encodeURIComponent(r.B1_FILIAL||'')+'" data-cod="'+encodeURIComponent(r.B1_COD||'')+'" style="cursor:pointer">'
       +'<td class="mn" style="font-size:11px">'+(r.B1_FILIAL||'')+'</td>'
       +'<td class="mn" style="font-weight:600">'+(r.B1_COD||'')+'</td>'
-      +'<td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="'+(r.B1_DESC||'')+'">'+(r.B1_DESC||'')+'</td>'
-      +'<td class="mn">'+(r.B1_UM||'')+'</td>'
+      +'<td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="'+(r.B1_DESC||'')+'">'+(r.B1_DESC||'')+'</td>'
+      +'<td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--muted)" title="'+(r.B1_DESC_CIEN||'')+'">'+(r.B1_DESC_CIEN||'')+'</td>'
+      +'<td class="mn">'+(r.B1_TIPO||'')+'</td>'
       +'<td class="mn">'+(r.B1_GRUPO||'-')+'</td>'
+      +'<td class="mn">'+(r.B1_UM||'')+'</td>'
       +'<td class="mn" style="font-weight:600">'+fmt(qatu)+'</td>'
       +'<td class="mn" style="color:var(--amber)">'+fmt(+r.B2_EMPENHO||0)+'</td>'
-      +'<td class="mn" style="font-weight:700;color:'+clr+'">'+fmt(disp)+'</td>'
       +'<td class="mn" style="color:var(--teal)">'+fmt(+r.B2_SCS||0)+'</td>'
       +'<td class="mn" style="color:var(--accent)">'+fmt(+r.B2_PCS||0)+'</td>'
-      +'<td class="mn" style="color:var(--muted2)">'+fmt(+r.MED_CONSUMO||0)+'</td>'
+      +'<td class="mn">'+fmt(+r.B2_OPS||0)+'</td>'
+      +'<td class="mn">'+fmt(+r.B2_PVS||0)+'</td>'
       +'<td class="mn" style="'+ppClr+'">'+(pp>0?fmt(pp):'-')+'</td>'
+      +'<td class="mn">'+fmt(+r.LOTE_ECON||0)+'</td>'
+      +'<td class="mn">'+fmt(+r.ENTREGA||0)+'</td>'
+      +'<td class="mn">'+(r.EST_MESES||'-')+'</td>'
+      +'<td class="mn" style="color:var(--muted2)">'+fmt(+r.MED_CONSUMO||0)+'</td>'
       +'<td class="mn" style="font-size:11px">'+fmtData(r.ULT_SAIDA||'-')+'</td>'
-      +'<td><span class="badge '+sc+'">'+sit+'</span></td>'
+      +'<td class="mn">'+(r.B1_CL||'-')+'</td>'
+      +'<td class="mn">'+(r.CONTR_END||'-')+'</td>'
       +'<td><span class="badge bz" style="font-size:9.5px">'+(r.B1_CLASSE||'-')+'</span></td>'
+      +'<td class="mn" style="font-weight:700;color:'+clr+';background:var(--surface2)">'+fmt(disp)+'</td>'
+      +'<td style="background:var(--surface2)"><span class="badge '+sc+'">'+sit+'</span></td>'
       +'</tr>';
   }).join('');
 }
@@ -1189,20 +1199,29 @@ function rEst(){
       <th onclick="so('B1_FILIAL')">Filial ↕</th>
       <th onclick="so('B1_COD')">Código ↕</th>
       <th onclick="so('B1_DESC')">Descrição ↕</th>
-      <th onclick="so('B1_UM')">UM ↕</th>
+      <th onclick="so('B1_DESC_CIEN')">Desc. Cientifica ↕</th>
+      <th onclick="so('B1_TIPO')">Tp ↕</th>
       <th onclick="so('B1_GRUPO')">Grupo ↕</th>
+      <th onclick="so('B1_UM')">UM ↕</th>
       <th onclick="so('B2_QATU')">Saldo Atual ↕</th>
       <th onclick="so('B2_EMPENHO')">Empenho ↕</th>
-      <th onclick="so('DISPONIVEL')">Disponível ↕</th>
       <th onclick="so('B2_SCS')">SCs Colocadas ↕</th>
       <th onclick="so('B2_PCS')">PCs Colocados ↕</th>
-      <th onclick="so('MED_CONSUMO')">Med. Consumo ↕</th>
+      <th onclick="so('B2_OPS')">OPs Colocadas ↕</th>
+      <th onclick="so('B2_PVS')">PVs Colocados ↕</th>
       <th onclick="so('PONTO_PEDIDO')">Ponto Pedido ↕</th>
-      <th onclick="so('ULT_SAIDA')">Últ. Saída ↕</th>
-      <th>Situação</th>
-      <th onclick="so('B1_CLASSE')">ABC ↕</th>
+      <th onclick="so('LOTE_ECON')">Lote Econom. ↕</th>
+      <th onclick="so('ENTREGA')">Entrega ↕</th>
+      <th onclick="so('EST_MESES')">Estoque Meses ↕</th>
+      <th onclick="so('MED_CONSUMO')">Med. Consumo ↕</th>
+      <th onclick="so('ULT_SAIDA')">DT.Ult.Saida ↕</th>
+      <th onclick="so('B1_CL')">CL ↕</th>
+      <th onclick="so('CONTR_END')">Contr.Endere ↕</th>
+      <th onclick="so('B1_CLASSE')">Classe ABC ↕</th>
+      <th onclick="so('DISPONIVEL')" style="background:var(--surface3)">Disponível ↕</th>
+      <th style="background:var(--surface3)">Situação</th>
     </tr></thead>
-    <tbody id="tbody-main">${rowsEst(d)}</tbody>
+    <tbody id="tbody-main">${rowsEst(d, 0, d)}</tbody>
   </table></div>`;
 }
 
@@ -1437,12 +1456,17 @@ function rImp(){
       ['Grupo','Grupo','Grupo do produto'],
     ],
     matr290:[
-      ['B1_COD','Código produto','Chave SB1'],['B1_DESC','Descrição','Nome do produto'],
-      ['B1_UM','Unidade medida','UN, KG, MT…'],['B1_TIPO','Tipo produto','PA, MP, PI…'],
-      ['B2_LOCAL','Armazém','Código SB2'],['B2_QATU','Saldo atual','Quantidade física'],
-      ['B2_EMPENHO','Empenhado','Reservas em aberto'],['B2_SALPEDI','Saldo pedido','Qtd em pedido de compra'],
-      ['B2_CM1','Custo médio','Custo médio unitário'],['B2_VATU1','Valor estoque','QATU × CM1'],
-      ['DISPONIVEL','Disponível','QATU − EMPENHO'],
+      ['Filial','Filial','Unidade'],['Codigo','Código produto','Chave SB1'],
+      ['Descricao','Descrição','Nome do produto'],['Desc. Cientifica','Desc. Cientifica','Nome técnico'],
+      ['Tp','Tipo','PA, MP, PI…'],['Grupo','Grupo','Grupo do produto'],
+      ['UM','Unidade medida','UN, KG, MT…'],['Saldo Atual','Saldo atual','Quantidade física'],
+      ['Empenho','Empenhado','Reservas em aberto'],['SCs Colocadas','SCs','SCs colocadas'],
+      ['PCs Colocados','PCs','PCs colocados'],['OPs Colocadas','OPs','OPs colocadas'],
+      ['PVs Colocados','PVs','PVs colocados'],['Ponto Pedido','Ponto Pedido','Ponto de pedido'],
+      ['Lote Econom.','Lote Econômico','Lote'],['Entrega','Entrega','Prazo'],
+      ['Estoque em Meses','Estoque Meses','Estoque'],['Med. Consumo','Consumo Médio','Consumo'],
+      ['DT.Ult.Saida','Última Saída','Data'],['CL','CL','Classe'],
+      ['Contr.Endere','Controle de Endereço','Controle'],['Classe ABC','Classe ABC','Curva ABC'],
     ],
   };
   const tab=S.itab;
@@ -1526,7 +1550,7 @@ function hideProgress(){
 }
 
 // ═══════════════════════════════════════════════
-// WORKER MANAGER (Lê o arquivo s/ travar a tela)
+// WORKER MANAGER
 // ═══════════════════════════════════════════════
 function procFileObj(file, tipo){
   showProgress('📂 Lendo '+file.name+'…', 10);
@@ -1536,7 +1560,6 @@ function procFileObj(file, tipo){
   rd.onload = function(e){
     showProgress('⚙️ Processando (arquivos grandes levam tempo mas a tela não vai travar)…', 30);
     
-    // Inicia o Worker em 2º plano
     const workerCode = document.getElementById('worker-script').textContent;
     const workerBlob = new Blob([workerCode], {type: 'application/javascript'});
     const worker = new Worker(URL.createObjectURL(workerBlob));
@@ -1563,7 +1586,6 @@ function procFileObj(file, tipo){
     if(isCSV){
       worker.postMessage({ type: 'csv', text: e.target.result });
     } else {
-      // Transferable Objects -> Não duplica memória RAM!
       worker.postMessage({ type: 'xlsx', buffer: e.target.result }, [e.target.result]);
     }
   };
@@ -1602,12 +1624,11 @@ function processarEmChunks(rows,tipo){
 }
 
 function finalizarImport(n,tipo){
-  // Uso otimizado de Map para liberar Array original logo e poupar RAM
   if(tipo==='pc'){
     const chave=function(x){return x.C7_FILIAL+'|'+x.C7_NUM+'|'+x.C7_PRODUTO;};
     const idx=new Map();
     for(let i=0; i<S.pc.length; i++) idx.set(chave(S.pc[i]), S.pc[i]);
-    S.pc = []; // Libera RAM antiga
+    S.pc = []; 
     for(let i=0; i<n.length; i++) idx.set(chave(n[i]), n[i]);
     S.pc=Array.from(idx.values());
     idx.clear();
@@ -1753,15 +1774,28 @@ function mapEst(rows,offset){
     const qatu=nNum(mp(r,'Saldo Atual','B2_QATU'));
     const emp=nNum(mp(r,'Empenho','B2_EMPENHO'));
     return{
+      B1_FILIAL:mp(r,'Filial','B1_FILIAL')||'01',
       B1_COD:mp(r,'Codigo','B1_COD'),
       B1_DESC:mp(r,'Descricao','B1_DESC'),
-      B1_FILIAL:mp(r,'Filial','B1_FILIAL')||'01',
-      B1_UM:mp(r,'UM','B1_UM')||'UN',
+      B1_DESC_CIEN:mp(r,'Desc. Cientifica','desc cientifica','desc. cientifica'),
+      B1_TIPO:mp(r,'Tp','tipo','B1_TIPO'),
       B1_GRUPO:mp(r,'Grupo','B1_GRUPO'),
+      B1_UM:mp(r,'UM','B1_UM')||'UN',
       B2_QATU:qatu, B2_EMPENHO:emp,
       DISPONIVEL:+(qatu-emp).toFixed(4)*1,
-      PONTO_PEDIDO:nNum(mp(r,'Ponto Pedido')),
-      ULT_SAIDA:fmtData(mp(r,'DT.Ult.Saida','ultima saida')),
+      B2_SCS:nNum(mp(r,'SCs Colocadas','scs colocadas')),
+      B2_PCS:nNum(mp(r,'PCs Colocados','pcs colocados')),
+      B2_OPS:nNum(mp(r,'OPs Colocadas','ops colocadas')),
+      B2_PVS:nNum(mp(r,'PVs Colocados','pvs colocados')),
+      PONTO_PEDIDO:nNum(mp(r,'Ponto Pedido','ponto pedido')),
+      LOTE_ECON:nNum(mp(r,'Lote Econom.','lote econom','lote economico')),
+      ENTREGA:nNum(mp(r,'Entrega','prazo entrega')),
+      EST_MESES:mp(r,'Estoque em Meses','estoque em meses'),
+      MED_CONSUMO:nNum(mp(r,'Med. Consumo','med consumo','med. consumo')),
+      ULT_SAIDA:fmtData(mp(r,'DT.Ult.Saida','ultima saida','dt.ult.saida')),
+      B1_CL:mp(r,'CL','cl'),
+      CONTR_END:mp(r,'Contr.Endere','contr.endere','controle endereco'),
+      B1_CLASSE:mp(r,'Classe ABC','classe abc','classe'),
     };
   });
 }
