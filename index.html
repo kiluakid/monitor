@@ -256,7 +256,6 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
   overflow:hidden;
   box-shadow:var(--shadow-sm);
 }
-/* FIX: container de estoque precisa de overflow visível para scroll funcionar */
 #tw-est{
   overflow:auto !important;
   max-height:calc(100vh - 260px);
@@ -692,6 +691,85 @@ function renderVEst(){
 }
 
 // ═══════════════════════════════════════════════
+// FUNÇÕES DE DATA
+// ═══════════════════════════════════════════════
+function fmtData(v) {
+  if (v === null || v === undefined || v === '' || v === '0' || v === 0) return '';
+  if (v instanceof Date) {
+    if (isNaN(v.getTime())) return '';
+    return String(v.getDate()).padStart(2, '0') + '/' 
+         + String(v.getMonth() + 1).padStart(2, '0') + '/' 
+         + String(v.getFullYear()).padStart(4, '0');
+  }
+  
+  const s = String(v).trim();
+  if (!s || s === '0' || s === 'null' || s === 'undefined') return '';
+
+  // REGRA EXTRA para corrigir dados salvos antigamente na memória cache como:
+  // "Tue Dec 15 2020 00:00:28 GMT-0300 (Hora padrão de Brasília)"
+  if (s.includes('GMT') || s.includes('UTC') || s.includes('Hora padrão') || s.includes('T00:00:00')) {
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) {
+      return String(d.getDate()).padStart(2, '0') + '/' 
+           + String(d.getMonth() + 1).padStart(2, '0') + '/' 
+           + String(d.getFullYear()).padStart(4, '0');
+    }
+  }
+
+  // Data do padrão ISO: YYYY-MM-DD
+  let iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) {
+    const y = parseInt(iso[1]), m = parseInt(iso[2]), d = parseInt(iso[3]);
+    if (y > 1900 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return String(d).padStart(2, '0') + '/' + String(m).padStart(2, '0') + '/' + String(y).padStart(4, '0');
+    }
+  }
+
+  // Formato com barras: DD/MM/YYYY ou D/M/YY
+  let barra = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (barra) {
+    let d = parseInt(barra[1]), m = parseInt(barra[2]), y = parseInt(barra[3]);
+    if (y < 100) y += 2000; // Ajusta anos como "23" para "2023"
+    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return String(d).padStart(2, '0') + '/' + String(m).padStart(2, '0') + '/' + String(y).padStart(4, '0');
+    }
+  }
+
+  // Formato Protheus direto: YYYYMMDD
+  if (/^\d{8}$/.test(s)) {
+    const y = parseInt(s.slice(0, 4)), m = parseInt(s.slice(4, 6)), d = parseInt(s.slice(6, 8));
+    if (y > 1900 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return String(d).padStart(2, '0') + '/' + String(m).padStart(2, '0') + '/' + String(y).padStart(4, '0');
+    }
+  }
+
+  // Número serial do Excel
+  const n = parseFloat(s.replace(',', '.'));
+  if (!isNaN(n) && n > 10000 && n < 80000 && !s.includes('/')) {
+    const adj = n > 60 ? n - 1 : n;
+    const epoch = new Date(1899, 11, 30);
+    epoch.setDate(epoch.getDate() + Math.floor(adj));
+    if (!isNaN(epoch.getTime())) {
+      return String(epoch.getDate()).padStart(2, '0') + '/' 
+           + String(epoch.getMonth() + 1).padStart(2, '0') + '/' 
+           + String(epoch.getFullYear()).padStart(4, '0');
+    }
+  }
+  
+  return s;
+}
+
+function dataOrd(v){
+  if(!v)return 0;
+  // A ordenação recebe dados que podem estar no formato longo ou já em DD/MM/YYYY.
+  // Vamos usar o fmtData nela pra garantir
+  const limpo = fmtData(v);
+  const m=String(limpo).match(/(\d{2})\/(\d{2})\/(\d{4})/);
+  if(m)return parseInt(m[3]+m[2]+m[1]);
+  return 0;
+}
+
+// ═══════════════════════════════════════════════
 // DASHBOARD
 // ═══════════════════════════════════════════════
 function rDash(){
@@ -763,7 +841,6 @@ function rDash(){
 // ═══════════════════════════════════════════════
 // PEDIDOS SC7
 // ═══════════════════════════════════════════════
-// FIX: usar forEach com índice real para bater com S.idx.pc
 function getFPC(){
   const b=S.f.busca.toLowerCase();
   const idx=S.idx.pc;
@@ -794,8 +871,8 @@ function rowsPC(d){
     <td class="mn">R$&nbsp;${fmt(r.C7_PRUNIT)}</td>
     <td class="mn" style="font-weight:600">R$&nbsp;${fmt(r.C7_TOTAL)}</td>
     <td>${bpc(r.C7_STATUS)}</td>
-    <td class="mn" style="font-size:11px">${r.C7_EMISSAO}</td>
-    <td class="mn" style="font-size:11px">${r.C7_DATPRF}</td>
+    <td class="mn" style="font-size:11px">${fmtData(r.C7_EMISSAO)}</td>
+    <td class="mn" style="font-size:11px">${fmtData(r.C7_DATPRF)}</td>
     <td style="font-size:11px;color:var(--muted)">${r.C7_COMPRADOR||''}</td>
     <td><button class="btn btn-g" style="padding:4px 9px;font-size:11px" onclick="event.stopPropagation();vPC('${r.C7_NUM}','${r.C7_PRODUTO}')">Ver</button></td>
   </tr>`).join('');
@@ -853,7 +930,6 @@ function rPC(){
 // ═══════════════════════════════════════════════
 // SOLICITAÇÕES SC1
 // ═══════════════════════════════════════════════
-// FIX: usar forEach com índice real para bater com S.idx.sc
 function getFSC(){
   const b=S.f.busca.toLowerCase();
   const idx=S.idx.sc;
@@ -881,8 +957,8 @@ function rowsSC(d){
     <td class="mn" style="color:${+r.C1_QUJE>0?'var(--green)':'var(--muted)'}">${fmt(r.C1_QUJE)}</td>
     <td style="font-size:12px">${r.C1_SOLICIT}</td>
     <td>${bsc(r.C1_STATUS)}</td>
-    <td class="mn" style="font-size:11px">${r.C1_EMISSAO}</td>
-    <td class="mn" style="font-size:11px">${r.C1_DATPRF}</td>
+    <td class="mn" style="font-size:11px">${fmtData(r.C1_EMISSAO)}</td>
+    <td class="mn" style="font-size:11px">${fmtData(r.C1_DATPRF)}</td>
     <td>${r.C1_PEDIDO?`<span class="badge bt">${r.C1_PEDIDO}</span>`:'-'}</td>
     <td><button class="btn btn-g" style="padding:4px 9px;font-size:11px" onclick="event.stopPropagation();vSC('${r.C1_NUM}')">Ver</button></td>
   </tr>`).join('');
@@ -934,7 +1010,6 @@ function rSC(){
 // ═══════════════════════════════════════════════
 // ESTOQUE MATR290
 // ═══════════════════════════════════════════════
-// FIX PRINCIPAL: usar forEach com índice real (não .filter que quebra o índice)
 function getFEst(){
   const b=S.f.busca.toLowerCase();
   const idx=S.idx.est;
@@ -986,14 +1061,13 @@ function rowsEst(d){
       +'<td class="mn" style="color:var(--accent)">'+fmt(+r.B2_PCS||0)+'</td>'
       +'<td class="mn" style="color:var(--muted2)">'+fmt(+r.MED_CONSUMO||0)+'</td>'
       +'<td class="mn" style="'+ppClr+'">'+(pp>0?fmt(pp):'-')+'</td>'
-      +'<td class="mn" style="font-size:11px">'+(r.ULT_SAIDA||'-')+'</td>'
+      +'<td class="mn" style="font-size:11px">'+fmtData(r.ULT_SAIDA||'-')+'</td>'
       +'<td><span class="badge '+sc+'">'+sit+'</span></td>'
       +'<td><span class="badge bz" style="font-size:9.5px">'+(r.B1_CLASSE||'-')+'</span></td>'
       +'</tr>';
   }).join('');
 }
 
-// FIX: delegação global no document — sobrevive à recriação do #tw-est
 let _estClickBound=false;
 function bindEstClick(){
   if(_estClickBound) return;
@@ -1010,7 +1084,6 @@ function bindEstClick(){
 
 function rEst(){
   const d=getFEst();
-  // FIX: inicializar virtual scroll já na primeira renderização
   S.vs.est._data=d;
   S.vs.est.start=0;
   const filiais=[...new Set(S.est.map(x=>x.B1_FILIAL).filter(Boolean))].sort();
@@ -1124,7 +1197,7 @@ function vEst(filial,cod){
       </div>
       <div class="mrow">
         <div class="mf"><div class="fl">Previsão de Entrega</div><div class="fv mn" style="color:var(--accent)">${fmt(+r.PREV_ENTREGA||0)}</div></div>
-        <div class="mf"><div class="fl">Últ. Saída</div><div class="fv mn">${r.ULT_SAIDA||'-'}</div></div>
+        <div class="mf"><div class="fl">Últ. Saída</div><div class="fv mn">${fmtData(r.ULT_SAIDA||'-')}</div></div>
         <div class="mf"><div class="fl">Custo Médio</div><div class="fv mn">R$ ${fmt(+r.B2_CM1||0)}</div></div>
         <div class="mf"><div class="fl">Valor em Estoque</div><div class="fv mn" style="font-weight:700">R$ ${fmt(+r.B2_VATU1||0)}</div></div>
       </div>
@@ -1168,7 +1241,7 @@ function vPC(num, prod){
               <td style="padding:7px 10px;text-align:right;font-family:var(--mono)">${fmt(it.C7_QUANT)} ${it.C7_UM||''}</td>
               <td style="padding:7px 10px;text-align:right;font-family:var(--mono)">R$&nbsp;${fmt(it.C7_PRUNIT)}</td>
               <td style="padding:7px 10px;text-align:right;font-family:var(--mono);font-weight:600">R$&nbsp;${fmt(it.C7_TOTAL)}</td>
-              <td style="padding:7px 10px;font-family:var(--mono);font-size:11px">${it.C7_DATPRF}</td>
+              <td style="padding:7px 10px;font-family:var(--mono);font-size:11px">${fmtData(it.C7_DATPRF)}</td>
               <td style="padding:7px 10px;font-family:var(--mono);font-size:11px">${it.C7_SOLICIT||'-'}</td>
             </tr>`).join('')}
             <tr style="border-top:2px solid var(--border2);background:var(--surface2)">
@@ -1191,7 +1264,7 @@ function vPC(num, prod){
       <div class="mrow">
         <div class="mf"><div class="fl">Filial</div><div class="fv mn" style="font-size:11px">${r.C7_FILIAL_DESC||r.C7_FILIAL}</div></div>
         <div class="mf"><div class="fl">Número / Item</div><div class="fv mn">${r.C7_NUM}</div></div>
-        <div class="mf"><div class="fl">Emissão</div><div class="fv mn">${r.C7_EMISSAO}</div></div>
+        <div class="mf"><div class="fl">Emissão</div><div class="fv mn">${fmtData(r.C7_EMISSAO)}</div></div>
         <div class="mf"><div class="fl">Comprador</div><div class="fv" style="font-size:12px">${r.C7_COMPRADOR||'-'}</div></div>
       </div>
       <div class="mrow">
@@ -1210,7 +1283,7 @@ function vPC(num, prod){
         <div class="mf"><div class="fl">Centro de Custo</div><div class="fv mn">${r.C7_CC||'-'}</div></div>
         <div class="mf"><div class="fl">Classe Valor</div><div class="fv mn">${r.C7_CLASSEVALOR||'-'}</div></div>
         <div class="mf"><div class="fl">SC de Origem</div><div class="fv mn">${r.C7_SOLICIT||'-'}</div></div>
-        <div class="mf"><div class="fl">Dt. Entrega</div><div class="fv mn">${r.C7_DATPRF}</div></div>
+        <div class="mf"><div class="fl">Dt. Entrega</div><div class="fv mn">${fmtData(r.C7_DATPRF)}</div></div>
       </div>
       ${r.C7_OBS?`<div class="mrow"><div class="mf full"><div class="fl">Observação</div><div class="fv" style="color:var(--amber)">${r.C7_OBS}</div></div></div>`:''}
       ${itensHTML}
@@ -1231,8 +1304,8 @@ function vSC(num){
       <div class="mrow">
         <div class="mf"><div class="fl">Filial</div><div class="fv mn" style="font-size:11px">${r.C1_FILIAL_DESC||r.C1_FILIAL}</div></div>
         <div class="mf"><div class="fl">C1_NUM / C1_ITEM</div><div class="fv mn">${r.C1_NUM} / ${r.C1_ITEM}</div></div>
-        <div class="mf"><div class="fl">C1_EMISSAO</div><div class="fv mn">${r.C1_EMISSAO}</div></div>
-        <div class="mf"><div class="fl">C1_DATPRF</div><div class="fv mn">${r.C1_DATPRF}</div></div>
+        <div class="mf"><div class="fl">C1_EMISSAO</div><div class="fv mn">${fmtData(r.C1_EMISSAO)}</div></div>
+        <div class="mf"><div class="fl">C1_DATPRF</div><div class="fv mn">${fmtData(r.C1_DATPRF)}</div></div>
       </div>
       <div class="mrow">
         <div class="mf full"><div class="fl">C1_PRODUTO · C1_DESCRI</div><div class="fv">${r.C1_PRODUTO} — ${r.C1_DESCRI}</div></div>
@@ -1520,7 +1593,6 @@ function finalizarImport(n,tipo){
     n.forEach(function(x){idx.set(chave(x),x);});
     S.est=[...idx.values()];
     rebuildIdxEst();
-    /* FIX: inicializar vs data ANTES de navegar */
     S.vs.est._data=[];
     S.vs.est.start=0;
     updBadges();_salvarAgora();
@@ -1528,68 +1600,6 @@ function finalizarImport(n,tipo){
     toast('✅ '+n.length.toLocaleString('pt-BR')+' produtos MATR290 importados ('+S.est.length.toLocaleString('pt-BR')+' total)!','success');
     setTimeout(function(){nav('estoque');},700);
   }
-}
-
-function fmtData(v) {
-  if (v === null || v === undefined || v === '' || v === '0' || v === 0) return '';
-  if (v instanceof Date) {
-    if (isNaN(v.getTime())) return '';
-    return String(v.getDate()).padStart(2, '0') + '/' 
-         + String(v.getMonth() + 1).padStart(2, '0') + '/' 
-         + String(v.getFullYear()).padStart(4, '0');
-  }
-  
-  const s = String(v).trim();
-  if (!s || s === '0' || s === 'null' || s === 'undefined') return '';
-
-  // Data do padrão ISO: YYYY-MM-DD
-  let iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (iso) {
-    const y = parseInt(iso[1]), m = parseInt(iso[2]), d = parseInt(iso[3]);
-    if (y > 1900 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
-      return String(d).padStart(2, '0') + '/' + String(m).padStart(2, '0') + '/' + String(y).padStart(4, '0');
-    }
-  }
-
-  // Formato com barras: DD/MM/YYYY ou D/M/YY
-  let barra = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
-  if (barra) {
-    let d = parseInt(barra[1]), m = parseInt(barra[2]), y = parseInt(barra[3]);
-    if (y < 100) y += 2000; // Ajusta anos como "23" para "2023"
-    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
-      return String(d).padStart(2, '0') + '/' + String(m).padStart(2, '0') + '/' + String(y).padStart(4, '0');
-    }
-  }
-
-  // Formato Protheus direto: YYYYMMDD
-  if (/^\d{8}$/.test(s)) {
-    const y = parseInt(s.slice(0, 4)), m = parseInt(s.slice(4, 6)), d = parseInt(s.slice(6, 8));
-    if (y > 1900 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
-      return String(d).padStart(2, '0') + '/' + String(m).padStart(2, '0') + '/' + String(y).padStart(4, '0');
-    }
-  }
-
-  // Número serial do Excel
-  const n = parseFloat(s.replace(',', '.'));
-  if (!isNaN(n) && n > 10000 && n < 80000 && !s.includes('/')) {
-    const adj = n > 60 ? n - 1 : n;
-    const epoch = new Date(1899, 11, 30);
-    epoch.setDate(epoch.getDate() + Math.floor(adj));
-    if (!isNaN(epoch.getTime())) {
-      return String(epoch.getDate()).padStart(2, '0') + '/' 
-           + String(epoch.getMonth() + 1).padStart(2, '0') + '/' 
-           + String(epoch.getFullYear()).padStart(4, '0');
-    }
-  }
-  
-  return s;
-}
-
-function dataOrd(v){
-  if(!v)return 0;
-  const m=String(v).match(/(\d{2})\/(\d{2})\/(\d{4})/);
-  if(m)return parseInt(m[3]+m[2]+m[1]);
-  return 0;
 }
 
 const _mpCache = new WeakMap();
@@ -1702,7 +1712,7 @@ function mapSC(rows,offset){
       C1_TIPO:nTipo(mp(r,'C1_TIPO','tipo'),um),
       C1_SOLICIT:mp(r,'C1_SOLICIT','solicitante','solicit','requester','usuario'),
       C1_EMISSAO:fmtData(mp(r,'C1_EMISSAO','DT Emissao','dt emissao','emissao','data emissao','data')),
-      C1_DATPRF:mp(r,'C1_DATPRF','datprf','necessidade','data necessidade','previsao'),
+      C1_DATPRF:fmtData(mp(r,'C1_DATPRF','datprf','necessidade','data necessidade','previsao')),
       C1_APROV:mp(r,'C1_APROV','aprovacao','aprov')||'',
       C1_PEDIDO:mp(r,'C1_PEDIDO','pedido gerado','pedido','numpc'),
       C1_STATUS:nStSC(statusRaw,quantPed,quant),
@@ -1896,7 +1906,6 @@ function setSyncStatus(msg){
   if(el) el.textContent=msg;
 }
 
-/* Detecta e descarta automaticamente dados de demonstração salvos em versões anteriores */
 const DEMO_CODES=['AÇO001','PAR002','LUV003','TIN004','FIL005','COR006','ROL007','OLE008','VAL009','FIT010'];
 function isDemoData(arr,campo){
   if(!arr||!arr.length) return false;
