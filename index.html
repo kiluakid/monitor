@@ -187,7 +187,6 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
   transition:all .2s;cursor:default;
 }
 .kpi:hover{border-color:var(--border2);transform:translateY(-2px);box-shadow:var(--shadow);}
-/* colorido top glow */
 .kpi::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;opacity:.8;}
 .kpi::after{content:'';position:absolute;top:0;left:0;right:0;height:60px;opacity:.04;}
 .kpi.bl::before{background:linear-gradient(90deg,transparent,var(--accent),transparent)}
@@ -256,6 +255,11 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
   border-radius:var(--rl);
   overflow:hidden;
   box-shadow:var(--shadow-sm);
+}
+/* FIX: container de estoque precisa de overflow visível para scroll funcionar */
+#tw-est{
+  overflow:auto !important;
+  max-height:calc(100vh - 260px);
 }
 table{width:100%;border-collapse:collapse;font-size:12px;}
 thead{background:var(--surface2);position:sticky;top:0;z-index:2;}
@@ -563,17 +567,16 @@ input[type=file]{display:none;}
 // ═══════════════════════════════════════════════
 const S = {
   pg:'dashboard',
-  pc:[],   // MATA121 — SC7 — Pedidos de compra
-  sc:[],   // MATA110 — SC1 — Solicitações de compra
-  est:[],  // MATR290 — SB1/SB2 — Estoque
-  idx:{pc:[],sc:[],est:[]}, // índices de busca pré-computados
+  pc:[],
+  sc:[],
+  est:[],
+  idx:{pc:[],sc:[],est:[]},
   f:{tipo:'todos',status:'todos',busca:'',filial:'todos',comprador:'todos'},
   sort:{campo:'',dir:1},
   itab:'mata121',
-  vs:{est:{start:0},pc:{start:0},sc:{start:0}}, // virtual scroll
+  vs:{est:{start:0,_data:[]},pc:{start:0},sc:{start:0}},
 };
 
-// ── Índice de busca: string achatada por item, calculada UMA vez na importação ──
 function buildIdx(arr,fields){
   return arr.map(function(r){return fields.map(function(f){return String(r[f]||'');}).join('|').toLowerCase();});
 }
@@ -581,85 +584,6 @@ function rebuildIdxPC(){ S.idx.pc=buildIdx(S.pc,['C7_NUM','C7_PRODUTO','C7_DESCR
 function rebuildIdxSC(){ S.idx.sc=buildIdx(S.sc,['C1_NUM','C1_PRODUTO','C1_DESCRI','C1_CC','C1_SOLICIT','C1_PEDIDO','C1_GRUPO','C1_FILIAL']); }
 function rebuildIdxEst(){ S.idx.est=buildIdx(S.est,['B1_COD','B1_DESC','B1_DESC_CIEN','B1_GRUPO','B1_UM','B1_FILIAL','B1_CLASSE','B1_TIPO','B1_CL']); }
 
-// ═══════════════════════════════════════════════
-// DEMO — campos reais Protheus
-// ═══════════════════════════════════════════════
-function gerarDemo(){
-  const forn=['AÇOS BRASIL LTDA','DISTRIB NORTE S/A','METALURGICA ABC LTDA','SUPRIMENTOS GERAIS ME','INDUSTRIAS DELTA S/A'];
-  const prods=[
-    {C:'AÇO001',D:'CHAPA ACO CARBONO 3MM',U:'KG'},
-    {C:'PAR002',D:'PARAFUSO 1/4 INOX',U:'PC'},
-    {C:'LUV003',D:'LUVA CANO 50MM PVC',U:'PC'},
-    {C:'TIN004',D:'TINTA ESMALTE BRILHO 18L',U:'LT'},
-    {C:'FIL005',D:'FILTRO PRENSA 20X20',U:'PC'},
-    {C:'COR006',D:'CORREIA V-BELT A45',U:'PC'},
-    {C:'ROL007',D:'ROLAMENTO 6205 2RS',U:'PC'},
-    {C:'OLE008',D:'OLEO HIDRAULICO 20L',U:'LT'},
-    {C:'VAL009',D:'VALVULA ESFERA 3/4',U:'PC'},
-    {C:'FIT010',D:'FITA ISOLANTE 19MM',U:'RL'},
-  ];
-  const ccs=['100','200','300','400','500'];
-  const stPC=['L','P','E','C',''];
-  const stSC=['P','L','G','C','B'];
-  for(let i=1;i<=28;i++){
-    const pr=prods[i%prods.length];
-    const tp=i%3===0?'S':'R';
-    const st=stPC[i%stPC.length];
-    const fn=forn[i%forn.length];
-    const qtd=+((i*17+50)%500+10).toFixed(2);
-    const pru=+((i*13+30)%400+20).toFixed(2);
-    const d=new Date(2025,Math.floor(i/5),i%28+1);
-    const de=new Date(d.getTime()+(15+i%30)*86400000);
-    S.pc.push({
-      C7_FILIAL:'01',C7_NUM:String(i).padStart(6,'0'),C7_ITEM:'001',
-      C7_PRODUTO:pr.C,C7_DESCRI:pr.D,
-      C7_FORNECE:fn,C7_LOJA:'01',
-      C7_QUANT:qtd,C7_PRUNIT:pru,C7_TOTAL:+(qtd*pru).toFixed(2),
-      C7_CC:ccs[i%5],C7_TIPO:tp,
-      C7_EMISSAO:d.toLocaleDateString('pt-BR'),
-      C7_DATPRF:de.toLocaleDateString('pt-BR'),
-      C7_QUJE:st==='P'?+(qtd*.4).toFixed(2):st==='L'?qtd:0,
-      C7_RESIDUO:st==='C'?'S':'N',
-      C7_STATUS:st,
-      C7_SOLICIT:String(Math.ceil(i/2)).padStart(6,'0'),
-      C7_OBS:st==='P'?'Entrega parcial pendente':'',
-    });
-  }
-  for(let i=1;i<=22;i++){
-    const pr=prods[i%prods.length];
-    const tp=i%4===0?'S':'R';
-    const st=stSC[i%stSC.length];
-    const qtd=+((i*11+5)%200+5).toFixed(2);
-    const d=new Date(2025,Math.floor(i/4),i%28+1);
-    const dn=new Date(d.getTime()+(10+i%20)*86400000);
-    S.sc.push({
-      C1_FILIAL:'01',C1_NUM:String(i).padStart(6,'0'),C1_ITEM:'001',
-      C1_PRODUTO:pr.C,C1_DESCRI:pr.D,
-      C1_QUANT:qtd,C1_QUJE:st==='G'?qtd:0,
-      C1_CC:ccs[i%5],C1_TIPO:tp,
-      C1_SOLICIT:'USUARIO '+String(i).padStart(2,'0'),
-      C1_EMISSAO:d.toLocaleDateString('pt-BR'),
-      C1_DATPRF:dn.toLocaleDateString('pt-BR'),
-      C1_APROV:st==='L'||st==='G'?'L':'B',
-      C1_PEDIDO:st==='G'?String(Math.ceil(i/2)).padStart(6,'0'):'',
-      C1_STATUS:st,C1_OBS:'',
-    });
-  }
-  prods.forEach((pr,i)=>{
-    const qatu=+((i*77+100)%1000+50).toFixed(2);
-    const emp=+(qatu*.25).toFixed(2);
-    const sped=+(qatu*.3).toFixed(2);
-    const cm=+((i*31+15)%300+10).toFixed(2);
-    S.est.push({
-      B1_COD:pr.C,B1_DESC:pr.D,B1_UM:pr.U,B1_TIPO:'PA',
-      B2_LOCAL:'01',
-      B2_QATU:qatu,B2_EMPENHO:emp,B2_SALPEDI:sped,
-      B2_CM1:cm,B2_VATU1:+(qatu*cm).toFixed(2),
-      DISPONIVEL:+(qatu-emp).toFixed(2),
-    });
-  });
-  updBadges();
-}
 
 function updBadges(){
   document.getElementById('bp').textContent=S.pc.length;
@@ -671,38 +595,16 @@ function updBadges(){
 // STATUS / TIPO helpers
 // ═══════════════════════════════════════════════
 const LPC={
-  '':'Pendente',   // sem status = aguardando
-  'P':'Parcial',   // entrega parcial
-  'E':'Em cotação',// em processo de cotação
-  'A':'Aprovado',  // aprovado / em andamento
-  'L':'Liberado',  // liberado / concluído
-  'C':'Cancelado', // cancelado
+  '':'Pendente','P':'Parcial','E':'Em cotação','A':'Aprovado','L':'Liberado','C':'Cancelado',
 };
 const LSC={
-  'P':'Pendente',    // aguardando ação
-  'E':'Em cotação',  // em processo de cotação
-  'L':'Liberada',    // aprovada/liberada
-  'G':'Gerou pedido',// SC convertida em PC
-  'B':'Bloqueada',   // bloqueada
-  'R':'Rejeitada',   // rejeitada
-  'C':'Cancelada',   // cancelada
+  'P':'Pendente','E':'Em cotação','L':'Liberada','G':'Gerou pedido','B':'Bloqueada','R':'Rejeitada','C':'Cancelada',
 };
 const CPC={
-  '':'ba',  // Pendente  → âmbar
-  'P':'bt', // Parcial   → teal
-  'E':'bb', // Em cotação → azul
-  'A':'bb', // Aprovado  → azul
-  'L':'bg', // Liberado  → verde
-  'C':'br', // Cancelado → vermelho
+  '':'ba','P':'bt','E':'bb','A':'bb','L':'bg','C':'br',
 };
 const CSC={
-  'P':'ba', // Pendente    → âmbar
-  'E':'bb', // Em cotação  → azul
-  'L':'bg', // Liberada    → verde
-  'G':'bg', // Gerou pedido → verde
-  'B':'br', // Bloqueada   → vermelho
-  'R':'br', // Rejeitada   → vermelho
-  'C':'br', // Cancelada   → vermelho
+  'P':'ba','E':'bb','L':'bg','G':'bg','B':'br','R':'br','C':'br',
 };
 
 function bpc(s){return`<span class="badge ${CPC[s]||'bz'}">${LPC[s]||s}</span>`;}
@@ -743,17 +645,14 @@ function render(){
   bindDrop();
 }
 
-/* renderTabela — atualiza APENAS o tbody, preservando foco.
-   Para datasets grandes usa virtual scroll (só renderiza linhas visíveis). */
 let _rtTimer=null;
 function renderTabela(immediate){
   clearTimeout(_rtTimer);
   if(immediate){ _doRenderTabela(); return; }
-  // debounce 200ms para buscas (não travar ao digitar)
   _rtTimer=setTimeout(_doRenderTabela, 200);
 }
-const VROW_H=36;   // altura estimada de cada linha em px
-const VPAGE=60;    // quantas linhas renderizar de cada vez (buffer)
+const VROW_H=36;
+const VPAGE=60;
 
 function _doRenderTabela(){
   const tb=document.getElementById('tbody-main');
@@ -773,7 +672,6 @@ function _doRenderTabela(){
     S.vs.est._data=d;
     S.vs.est.start=0;
     renderVEst();
-    bindEstClick();
   }
 }
 
@@ -781,6 +679,10 @@ function renderVEst(){
   const tb=document.getElementById('tbody-main');
   if(!tb)return;
   const d=S.vs.est._data||[];
+  if(!d.length){
+    tb.innerHTML='<tr><td colspan="15"><div class="empty"><div class="empty-i">📦</div><div class="empty-t">Nenhum produto encontrado</div><div class="empty-s">Ajuste os filtros ou importe MATR290</div></div></td></tr>';
+    return;
+  }
   const start=S.vs.est.start||0;
   const slice=d.slice(start,start+VPAGE);
   const before=start*VROW_H;
@@ -790,7 +692,6 @@ function renderVEst(){
   html+=rowsEst(slice);
   if(after>0) html+='<tr style="height:'+after+'px;background:transparent"><td colspan="15"></td></tr>';
   tb.innerHTML=html;
-  bindEstClick();
 }
 
 // ═══════════════════════════════════════════════
@@ -801,9 +702,8 @@ function rDash(){
   const abertos=p.filter(x=>x.C7_STATUS===''||x.C7_STATUS==='A').length;
   const parciais=p.filter(x=>x.C7_STATUS==='P').length;
   const cancelados=p.filter(x=>x.C7_STATUS==='C').length;
-  const aprovados=p.filter(x=>x.C7_STATUS==='A').length;
   const vTotal=p.reduce((a,b)=>a+(+b.C7_TOTAL||0),0);
-  const scSemPC=s.filter(x=>x.C1_STATUS==='P'||x.C1_STATUS==='E').length; // Pendente ou Em cotação
+  const scSemPC=s.filter(x=>x.C1_STATUS==='P'||x.C1_STATUS==='E').length;
   const dispZero=e.filter(x=>(+x.DISPONIVEL||0)<=0).length;
   const ultP=[...p].slice(-5).reverse();
   const ultS=[...s].slice(-5).reverse();
@@ -866,23 +766,25 @@ function rDash(){
 // ═══════════════════════════════════════════════
 // PEDIDOS SC7
 // ═══════════════════════════════════════════════
+// FIX: usar forEach com índice real para bater com S.idx.pc
 function getFPC(){
   const b=S.f.busca.toLowerCase();
   const idx=S.idx.pc;
-  let d=S.pc.filter(function(x,i){
-    if(S.f.filial!=='todos'&&x.C7_FILIAL!==S.f.filial) return false;
-    if(S.f.tipo!=='todos'&&(S.f.tipo==='R'?x.C7_TIPO==='S':x.C7_TIPO!=='S')) return false;
-    if(S.f.status!=='todos'&&x.C7_STATUS!==S.f.status) return false;
-    if(S.f.comprador!=='todos'&&x.C7_COMPRADOR!==S.f.comprador) return false;
-    if(b&&!(idx[i]||'').includes(b)) return false;
-    return true;
+  const d=[];
+  S.pc.forEach(function(x,i){
+    if(S.f.filial!=='todos'&&x.C7_FILIAL!==S.f.filial) return;
+    if(S.f.tipo!=='todos'&&(S.f.tipo==='R'?x.C7_TIPO==='S':x.C7_TIPO!=='S')) return;
+    if(S.f.status!=='todos'&&x.C7_STATUS!==S.f.status) return;
+    if(S.f.comprador!=='todos'&&x.C7_COMPRADOR!==S.f.comprador) return;
+    if(b&&!(idx[i]||'').includes(b)) return;
+    d.push(x);
   });
   if(S.sort.campo){const dc=['C7_EMISSAO','C7_DATPRF'];d.sort((a,b)=>{const av=a[S.sort.campo],bv=b[S.sort.campo];if(dc.includes(S.sort.campo))return(dataOrd(av)-dataOrd(bv))*S.sort.dir;return(isNaN(av)||isNaN(bv)?String(av||'').localeCompare(String(bv||''),'pt'):(+av)-(+bv))*S.sort.dir;});}
   return d;
 }
 
 function rowsPC(d){
-  if(!d.length) return `<tr><td colspan="14"><div class="empty"><div class="empty-i">📋</div><div class="empty-t">Nenhum pedido encontrado</div><div class="empty-s">Ajuste os filtros ou importe MATA121</div></div></td></tr>`;
+  if(!d.length) return `<tr><td colspan="15"><div class="empty"><div class="empty-i">📋</div><div class="empty-t">Nenhum pedido encontrado</div><div class="empty-s">Ajuste os filtros ou importe MATA121</div></div></td></tr>`;
   return d.map(r=>`<tr onclick="vPC('${r.C7_NUM}','${r.C7_PRODUTO}')" style="cursor:pointer">
     <td class="mn">${r.C7_NUM}</td>
     <td>${btipo(r.C7_TIPO)}</td>
@@ -954,15 +856,17 @@ function rPC(){
 // ═══════════════════════════════════════════════
 // SOLICITAÇÕES SC1
 // ═══════════════════════════════════════════════
+// FIX: usar forEach com índice real para bater com S.idx.sc
 function getFSC(){
   const b=S.f.busca.toLowerCase();
   const idx=S.idx.sc;
-  let d=S.sc.filter(function(x,i){
-    if(S.f.filial!=='todos'&&x.C1_FILIAL!==S.f.filial) return false;
-    if(S.f.tipo!=='todos'&&(S.f.tipo==='R'?x.C1_TIPO==='S':x.C1_TIPO!=='S')) return false;
-    if(S.f.status!=='todos'&&x.C1_STATUS!==S.f.status) return false;
-    if(b&&!(idx[i]||'').includes(b)) return false;
-    return true;
+  const d=[];
+  S.sc.forEach(function(x,i){
+    if(S.f.filial!=='todos'&&x.C1_FILIAL!==S.f.filial) return;
+    if(S.f.tipo!=='todos'&&(S.f.tipo==='R'?x.C1_TIPO==='S':x.C1_TIPO!=='S')) return;
+    if(S.f.status!=='todos'&&x.C1_STATUS!==S.f.status) return;
+    if(b&&!(idx[i]||'').includes(b)) return;
+    d.push(x);
   });
   if(S.sort.campo){const dc=['C1_EMISSAO','C1_DATPRF'];d.sort((a,b)=>{const av=a[S.sort.campo],bv=b[S.sort.campo];if(dc.includes(S.sort.campo))return(dataOrd(av)-dataOrd(bv))*S.sort.dir;return(isNaN(av)||isNaN(bv)?String(av||'').localeCompare(String(bv||''),'pt'):(+av)-(+bv))*S.sort.dir;});}
   return d;
@@ -1033,22 +937,23 @@ function rSC(){
 // ═══════════════════════════════════════════════
 // ESTOQUE MATR290
 // ═══════════════════════════════════════════════
+// FIX PRINCIPAL: usar forEach com índice real (não .filter que quebra o índice)
 function getFEst(){
   const b=S.f.busca.toLowerCase();
   const idx=S.idx.est;
-  let d=S.est.filter(function(x,i){
-    if(S.f.filial&&S.f.filial!=='todos'&&x.B1_FILIAL!==S.f.filial) return false;
+  const d=[];
+  S.est.forEach(function(x,i){
+    if(S.f.filial&&S.f.filial!=='todos'&&x.B1_FILIAL!==S.f.filial) return;
     if(S.f.status==='ponto'){
-      /* Produtos que têm ponto de pedido cadastrado (qualquer valor > 0) */
-      if(!((+x.PONTO_PEDIDO||0)>0)) return false;
+      if(!((+x.PONTO_PEDIDO||0)>0)) return;
     }
-    if(S.f.status==='critico'&&(+x.DISPONIVEL||0)>0) return false;
+    if(S.f.status==='critico'&&(+x.DISPONIVEL||0)>0) return;
     if(S.f.status==='baixo'){
       const disp=+x.DISPONIVEL||0,qatu=+x.B2_QATU||0;
-      if(!(disp>0&&disp<=qatu*.2)) return false;
+      if(!(disp>0&&disp<=qatu*.2)) return;
     }
-    if(b&&!(idx[i]||'').includes(b)) return false;
-    return true;
+    if(b&&!(idx[i]||'').includes(b)) return;
+    d.push(x);
   });
   if(S.sort.campo){
     const c=S.sort.campo,dir=S.sort.dir;
@@ -1063,7 +968,7 @@ function getFEst(){
 
 function rowsEst(d){
   if(!d.length) return '<tr><td colspan="15"><div class="empty"><div class="empty-i">📦</div><div class="empty-t">Nenhum produto encontrado</div><div class="empty-s">Ajuste os filtros ou importe MATR290</div></div></td></tr>';
-  return d.map(function(r,i){
+  return d.map(function(r){
     const disp=+r.DISPONIVEL||0,qatu=+r.B2_QATU||0;
     const pct=qatu>0?disp/qatu:0;
     const sit=disp<=0?'Crítico':pct<.2?'Baixo':'Normal';
@@ -1071,7 +976,6 @@ function rowsEst(d){
     const clr=disp<=0?'var(--red)':pct<.2?'var(--amber)':'var(--green)';
     const pp =+r.PONTO_PEDIDO||0;
     const ppClr=pp>0?'color:var(--accent);font-weight:600':'color:var(--muted)';
-    /* Usar data-idx para evitar quebra por aspas/caracteres especiais no cod */
     return '<tr class="est-row" data-filial="'+encodeURIComponent(r.B1_FILIAL||'')+'" data-cod="'+encodeURIComponent(r.B1_COD||'')+'" style="cursor:pointer">'
       +'<td class="mn" style="font-size:11px">'+(r.B1_FILIAL||'')+'</td>'
       +'<td class="mn" style="font-weight:600">'+(r.B1_COD||'')+'</td>'
@@ -1092,13 +996,13 @@ function rowsEst(d){
   }).join('');
 }
 
-/* Delegação de evento no container fixo #tw-est (nunca recriado, só o tbody muda).
-   Registra uma única vez — cliques em qualquer linha .est-row abrem o modal. */
+// FIX: delegação global no document — sobrevive à recriação do #tw-est
+let _estClickBound=false;
 function bindEstClick(){
-  const wrap=document.getElementById('tw-est');
-  if(!wrap||wrap._estBound) return;
-  wrap._estBound=true;
-  wrap.addEventListener('click',function(e){
+  if(_estClickBound) return;
+  _estClickBound=true;
+  document.addEventListener('click',function(e){
+    if(S.pg!=='estoque') return;
     const tr=e.target.closest('tr.est-row');
     if(!tr) return;
     const filial=decodeURIComponent(tr.dataset.filial||'');
@@ -1109,7 +1013,9 @@ function bindEstClick(){
 
 function rEst(){
   const d=getFEst();
-  /* Montar lista de filiais únicas para filtro */
+  // FIX: inicializar virtual scroll já na primeira renderização
+  S.vs.est._data=d;
+  S.vs.est.start=0;
   const filiais=[...new Set(S.est.map(x=>x.B1_FILIAL).filter(Boolean))].sort();
   const fDesc=f=>{const e=S.est.find(x=>x.B1_FILIAL===f);return e&&e.B1_FILIAL_DESC?e.B1_FILIAL_DESC:f;};
   return`
@@ -1186,7 +1092,6 @@ function vEst(filial,cod){
         <div class="mf"><div class="fl">CL</div><div class="fv mn">${r.B1_CL||'-'}</div></div>
         <div class="mf"><div class="fl">Contr. Endereç.</div><div class="fv mn">${r.CONTR_END||'-'}</div></div>
       </div>
-      <!-- Saldos -->
       <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;margin-bottom:12px">
         <div class="fl" style="margin-bottom:10px">SALDOS E MOVIMENTOS</div>
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
@@ -1208,14 +1113,12 @@ function vEst(filial,cod){
           </div>
         </div>
       </div>
-      <!-- Colocados -->
       <div class="mrow">
         <div class="mf"><div class="fl">SCs Colocadas</div><div class="fv mn" style="color:var(--teal)">${fmt(+r.B2_SCS||0)}</div></div>
         <div class="mf"><div class="fl">PCs Colocados</div><div class="fv mn" style="color:var(--accent)">${fmt(+r.B2_PCS||0)}</div></div>
         <div class="mf"><div class="fl">OPs Colocadas</div><div class="fv mn">${fmt(+r.B2_OPS||0)}</div></div>
         <div class="mf"><div class="fl">PVs Colocados</div><div class="fv mn">${fmt(+r.B2_PVS||0)}</div></div>
       </div>
-      <!-- Planejamento -->
       <div class="mrow">
         <div class="mf"><div class="fl">Ponto Pedido</div><div class="fv mn">${fmt(+r.PONTO_PEDIDO||0)}</div></div>
         <div class="mf"><div class="fl">Lote Econômico</div><div class="fv mn">${fmt(+r.LOTE_ECON||0)}</div></div>
@@ -1225,15 +1128,15 @@ function vEst(filial,cod){
       <div class="mrow">
         <div class="mf"><div class="fl">Previsão de Entrega</div><div class="fv mn" style="color:var(--accent)">${fmt(+r.PREV_ENTREGA||0)}</div></div>
         <div class="mf"><div class="fl">Últ. Saída</div><div class="fv mn">${r.ULT_SAIDA||'-'}</div></div>
-        <div class="mf"><div class="fl">Custo Médio</div><div class="fv mn">R$ ${fmt(+r.B2_CM1||0)}</div></div>
-        <div class="mf"><div class="fl">Valor em Estoque</div><div class="fv mn" style="font-weight:700">R$ ${fmt(+r.B2_VATU1||0)}</div></div>
+        <div class="mf"><div class="fl">Custo Médio</div><div class="fv mn">R$ ${fmt(+r.B2_CM1||0)}</div></div>
+        <div class="mf"><div class="fl">Valor em Estoque</div><div class="fv mn" style="font-weight:700">R$ ${fmt(+r.B2_VATU1||0)}</div></div>
       </div>
       ${r.B1_OBS?`<div class="mrow"><div class="mf full"><div class="fl">Observação</div><div class="fv" style="color:var(--amber)">${r.B1_OBS}</div></div></div>`:''}
     </div>
     <div class="mfoot">
       <span style="font-size:12px;color:var(--muted);margin-right:auto">
         Disponível: <strong style="color:${disp<=0?'var(--red)':pct<.2?'var(--amber)':'var(--green)'}">${fmt(disp)} ${r.B1_UM||''}</strong>
-        &nbsp;·&nbsp;Custo Médio: <strong>R$ ${fmt(+r.B2_CM1||0)}</strong>
+        &nbsp;·&nbsp;Custo Médio: <strong>R$ ${fmt(+r.B2_CM1||0)}</strong>
       </span>
       <button class="btn btn-g" onclick="closeM()">Fechar</button>
     </div>`;
@@ -1241,13 +1144,10 @@ function vEst(filial,cod){
 }
 
 function vPC(num, prod){
-  /* Se veio produto específico, mostra detalhe desse item.
-     Senão, mostra todos os itens do pedido agrupados. */
   const todos=S.pc.filter(x=>x.C7_NUM===num);
   if(!todos.length)return;
   const r=prod?todos.find(x=>x.C7_PRODUTO===prod)||todos[0]:todos[0];
   const totalPC=todos.reduce((a,b)=>a+(+b.C7_TOTAL||0),0);
-  /* Tabela de itens do mesmo pedido */
   const itensHTML=todos.length>1?`
     <div style="margin-top:14px">
       <div class="fl" style="margin-bottom:7px">TODOS OS ITENS DESTE PEDIDO (${todos.length})</div>
@@ -1265,7 +1165,7 @@ function vPC(num, prod){
             </tr>
           </thead>
           <tbody>
-            ${todos.map((it,i)=>`<tr style="border-top:1px solid var(--border);background:${it.C7_PRODUTO===r.C7_PRODUTO?'rgba(79,124,255,.07)':''}">
+            ${todos.map((it)=>`<tr style="border-top:1px solid var(--border);background:${it.C7_PRODUTO===r.C7_PRODUTO?'rgba(79,124,255,.07)':''}">
               <td style="padding:7px 10px;font-family:var(--mono);font-size:11px">${it.C7_PRODUTO}</td>
               <td style="padding:7px 10px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${it.C7_DESCRI}">${it.C7_DESCRI}</td>
               <td style="padding:7px 10px;text-align:right;font-family:var(--mono)">${fmt(it.C7_QUANT)} ${it.C7_UM||''}</td>
@@ -1304,7 +1204,7 @@ function vPC(num, prod){
         <div class="mf full"><div class="fl">Fornecedor (CNPJ/Cód.)</div><div class="fv mn">${r.C7_FORNECE}</div></div>
       </div>
       <div class="mrow">
-        <div class="mf"><div class="fl">Qtd / Unidade</div><div class="fv mn">${fmt(r.C7_QUANT)} ${r.C7_UM||''}</div></div>
+        <div class="mf"><div class="fl">Qtd / Unidade</div><div class="fv mn">${fmt(r.C7_QUANT)} ${r.C7_UM||''}</td></div>
         <div class="mf"><div class="fl">Qtd. Entregue</div><div class="fv mn" style="color:var(--green)">${fmt(r.C7_QUJE)}</div></div>
         <div class="mf"><div class="fl">Preço Unitário</div><div class="fv mn">R$&nbsp;${fmt(r.C7_PRUNIT)}</div></div>
         <div class="mf"><div class="fl">Total do Item</div><div class="fv mn" style="font-weight:600">R$&nbsp;${fmt(r.C7_TOTAL)}</div></div>
@@ -1440,7 +1340,6 @@ function dlv(id){document.getElementById(id)?.classList.remove('drag');}
 function ddr(e,tipo){e.preventDefault();dlv('zone-'+(tipo==='pc'?'pc':tipo==='sc'?'sc':'est'));const f=e.dataTransfer.files[0];if(f)procFileObj(f,tipo);}
 function procFile(inp,tipo){const f=inp.files[0];if(f)procFileObj(f,tipo);}
 
-/* Barra de progresso flutuante */
 function showProgress(msg,pct){
   let el=document.getElementById('prog-bar');
   if(!el){
@@ -1477,18 +1376,13 @@ function hideProgress(){
   }
 }
 
-/* Lê todas as abas relevantes do workbook Protheus.
-   Retorna array de arrays já com cabeçalho detectado por aba. */
-/* Normaliza cabeçalho: remove _x000D_, \r\n, espaços extras (problema do MATR290) */
 function normHdr(h){
   return String(h||'').replace(/_x000D_/g,'').replace(/\r\n|\r|\n/g,' ').replace(/\s+/g,' ').trim();
 }
 
-/* Abas que NÃO contêm dados de produtos — pivot tables e dashboards */
 const ABAS_IGNORAR=['parametros','estoque zerado e prev entrega','dados rápido sc e pc',
   'tratamento controle de endereç','dados rápidos qnt e end'];
 
-/* Verifica se uma aba tem estrutura de dados de produtos (cabeçalho com Codigo/Filial) */
 function abaTemDados(hdrs){
   const flat=hdrs.map(function(h){return normHdr(h).toLowerCase();});
   return flat.some(function(h){return h==='codigo'||h==='filial'||h==='key';});
@@ -1496,11 +1390,7 @@ function abaTemDados(hdrs){
 
 function lerAbasProtheus(wb){
   const nomes=wb.SheetNames;
-
-  /* Prioridade: usar "Matr290 Geral" se existir (já tem tudo consolidado com Key única) */
   const abaGeral=nomes.find(function(n){return n.toLowerCase().includes('geral');});
-
-  /* Lista de abas a processar: Geral > filiais individuais */
   let abas;
   if(abaGeral){
     abas=[abaGeral];
@@ -1509,33 +1399,22 @@ function lerAbasProtheus(wb){
       return !ABAS_IGNORAR.some(function(ig){return n.toLowerCase().includes(ig.toLowerCase());});
     });
   }
-
   const resultado=[];
   abas.forEach(function(nome){
     const ws=wb.Sheets[nome];
     if(!ws) return;
-
-    /* Amostra: primeiras 3 linhas para detectar hdrIdx */
     const amostra=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:false,
       range:{s:{r:0,c:0},e:{r:2,c:30}}});
     if(!amostra||!amostra.length) return;
-
-    /* Detectar linha do cabeçalho real */
     let hdrIdx=0;
     for(let i=0;i<amostra.length;i++){
       const filled=amostra[i].filter(function(c){return c!==''&&c!==null&&c!==undefined;}).length;
       if(filled>2){hdrIdx=i;break;}
     }
-
-    /* Verificar se tem cabeçalho de produto antes de carregar tudo */
     if(!abaTemDados(amostra[hdrIdx]||[])) return;
-
-    /* Ler planilha completa com raw:true para receber Date nativo */
     const arr=XLSX.utils.sheet_to_json(ws,{header:1,defval:null,raw:true,range:hdrIdx});
     if(!arr||arr.length<2) return;
-
     const hdrs=arr[0].map(normHdr);
-
     for(let i=1;i<arr.length;i++){
       const row=arr[i];
       if(!row||row.every(function(c){return c===null||c===undefined||c===''})) continue;
@@ -1553,7 +1432,6 @@ function procFileObj(file,tipo){
   showProgress('📂 Lendo '+file.name+'…',10);
   const rd=new FileReader();
   rd.onload=function(e){
-    /* setTimeout 0 libera a UI para renderizar o progress antes de travar */
     setTimeout(function(){
       try{
         let rows=[];
@@ -1578,7 +1456,6 @@ function procFileObj(file,tipo){
         }
         if(!rows.length){toast('Arquivo vazio ou formato não reconhecido','error');hideProgress();return;}
         showProgress('⚙️ Mapeando '+rows.length.toLocaleString('pt-BR')+' registros…',60);
-        /* Processar em chunks via requestAnimationFrame para não travar UI */
         processarEmChunks(rows,tipo);
       }catch(err){
         hideProgress();
@@ -1592,14 +1469,10 @@ function procFileObj(file,tipo){
   else rd.readAsArrayBuffer(file);
 }
 
-/* processarEmChunks — chunk adaptativo: mede o tempo de cada step e ajusta
-   para manter cada frame abaixo de 80ms (deixa a UI responsiva).
-   Para MATR290 com 123k linhas: ~40 frames de ~3k linhas cada */
 function processarEmChunks(rows,tipo){
   const total=rows.length;
-  /* Pré-calcular índice de colunas para mapEst evitar mp() por linha */
   const processados=new Array(total);
-  let chunk=2000; // começa conservador
+  let chunk=2000;
   let i=0;
   function step(){
     const t0=performance.now();
@@ -1609,18 +1482,15 @@ function processarEmChunks(rows,tipo){
     if(tipo==='pc') mapeados=mapPC(fatia,i);
     else if(tipo==='sc') mapeados=mapSC(fatia,i);
     else mapeados=mapEst(fatia,i);
-    /* Copiar resultado para array pré-alocado */
     for(let k=0;k<mapeados.length;k++) processados[i+k]=mapeados[k];
     i=fim;
     const elapsed=performance.now()-t0;
-    /* Ajustar chunk: manter ~60ms por frame */
     if(elapsed<30&&chunk<8000) chunk=Math.min(chunk+500,8000);
     else if(elapsed>80&&chunk>500) chunk=Math.max(chunk-500,500);
     const pct=60+Math.round((i/total)*30);
     showProgress('⚙️ Processando… '+i.toLocaleString('pt-BR')+' / '+total.toLocaleString('pt-BR'),pct);
     if(i<total){ requestAnimationFrame(step); return; }
     showProgress('💾 Salvando…',95);
-    /* Usar setTimeout para liberar o thread antes de finalizar */
     setTimeout(function(){ finalizarImport(processados.filter(Boolean),tipo); },20);
   }
   requestAnimationFrame(step);
@@ -1648,12 +1518,14 @@ function finalizarImport(n,tipo){
     toast('✅ '+n.length.toLocaleString('pt-BR')+' linhas MATA110 importadas ('+S.sc.length.toLocaleString('pt-BR')+' total)!','success');
     setTimeout(function(){nav('sc');},700);
   } else {
-    /* Chave: B1_KEY (coluna Key do Matr290 Geral) ou filial+codigo */
     const chave=function(x){return x.B1_KEY||x.B1_FILIAL+'|'+x.B1_COD;};
     const idx=new Map(S.est.map(function(x){return[chave(x),x];}));
     n.forEach(function(x){idx.set(chave(x),x);});
     S.est=[...idx.values()];
     rebuildIdxEst();
+    /* FIX: inicializar vs data ANTES de navegar */
+    S.vs.est._data=[];
+    S.vs.est.start=0;
     updBadges();_salvarAgora();
     hideProgress();
     toast('✅ '+n.length.toLocaleString('pt-BR')+' produtos MATR290 importados ('+S.est.length.toLocaleString('pt-BR')+' total)!','success');
@@ -1661,44 +1533,30 @@ function finalizarImport(n,tipo){
   }
 }
 
-/* fmtData — converte QUALQUER formato de data para DD/MM/AAAA (padrão brasileiro)
-   Suporta: Date nativo (cellDates:true), ISO string, serial Excel, AAAAMMDD, DD/MM/AAAA */
 function fmtData(v){
   if(v===null||v===undefined||v===''||v==='0'||v===0) return '';
-
-  /* ── 1. Objeto Date nativo do JavaScript (SheetJS cellDates:true) ── */
   if(v instanceof Date){
     if(isNaN(v.getTime())) return '';
     return String(v.getDate()).padStart(2,'0')+'/'
           +String(v.getMonth()+1).padStart(2,'0')+'/'
           +v.getFullYear();
   }
-
   const s=String(v).trim();
   if(!s||s==='0'||s==='null'||s==='undefined') return '';
-
-  /* ── 2. ISO com ou sem T: "2024-11-01T00:00:00.000Z" ou "2024-11-01 00:00:00" ── */
   const iso=s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if(iso){
     const y=parseInt(iso[1]),m=parseInt(iso[2]),d=parseInt(iso[3]);
     if(y>1900&&m>=1&&m<=12&&d>=1&&d<=31)
       return String(d).padStart(2,'0')+'/'+String(m).padStart(2,'0')+'/'+y;
   }
-
-  /* ── 3. Já está DD/MM/AAAA ── */
   if(/^\d{2}\/\d{2}\/\d{4}$/.test(s)) return s;
-
-  /* ── 4. Formato interno Protheus AAAAMMDD (ex: "20241101") ── */
   if(/^\d{8}$/.test(s)){
     const y=s.slice(0,4),m=s.slice(4,6),d=s.slice(6,8);
     if(parseInt(m)>=1&&parseInt(m)<=12&&parseInt(d)>=1&&parseInt(d)<=31)
       return d+'/'+m+'/'+y;
   }
-
-  /* ── 5. Serial numérico Excel (ex: 45596) ── */
   const n=parseFloat(s.replace(',','.'));
   if(!isNaN(n)&&n>10000&&n<80000){
-    /* Bug Excel: considera 1900 bissexto, corrigir para n>60 */
     const adj=n>60?n-1:n;
     const epoch=new Date(1899,11,30);
     epoch.setDate(epoch.getDate()+Math.floor(adj));
@@ -1707,18 +1565,16 @@ function fmtData(v){
             +String(epoch.getMonth()+1).padStart(2,'0')+'/'
             +epoch.getFullYear();
   }
-
-  /* ── 6. Retornar como está se não reconheceu ── */
   return s;
 }
-/* Converte data para valor comparável (para ordenação correta) */
+
 function dataOrd(v){
   if(!v)return 0;
   const m=String(v).match(/(\d{2})\/(\d{2})\/(\d{4})/);
   if(m)return parseInt(m[3]+m[2]+m[1]);
   return 0;
 }
-/* mp() otimizado: normaliza chaves UMA vez por objeto usando cache WeakMap */
+
 const _mpCache = new WeakMap();
 function _norm(s){ return String(s||'').trim().toLowerCase().replace(/[^a-z0-9]/g,''); }
 function mp(obj,...cs){
@@ -1737,7 +1593,6 @@ function mp(obj,...cs){
     const hit=norm[c.trim().toLowerCase()]||norm[_norm(c)];
     if(hit&&hit.v!=='') return hit.v;
   }
-  /* Busca parcial como fallback */
   const nc=cs.map(c=>_norm(c));
   for(const c of nc){
     for(const key of Object.keys(norm)){
@@ -1752,32 +1607,29 @@ function mp(obj,...cs){
 function nTipo(v,um=''){const s=String(v).toUpperCase();const u=String(um).toUpperCase().trim();if(u==='SV')return'S';return(s==='S'||s.includes('DIRETO')||s.includes('SERVICO'))?'S':'R';}
 function nStPC(v,quje,qtd){
   const s=String(v||'').toUpperCase().trim();
-  if(!s||s==='PENDENTE'||s==='ABERTO')return'';          // Pendente
-  if(s==='E'||s.includes('COTAC')||s.includes('COTAÇ')) return'E'; // Em cotação
-  if(s==='P'||s.includes('PARCI'))                       return'P'; // Parcial
-  if(s==='A'||s.includes('APROV'))                       return'A'; // Aprovado
-  if(s==='L'||s.includes('LIBER'))                       return'L'; // Liberado
-  if(s==='C'||s.includes('CANCEL'))                      return'C'; // Cancelado
-  /* Inferir por entrega quando não há coluna status */
+  if(!s||s==='PENDENTE'||s==='ABERTO')return'';
+  if(s==='E'||s.includes('COTAC')||s.includes('COTAÇ')) return'E';
+  if(s==='P'||s.includes('PARCI'))                       return'P';
+  if(s==='A'||s.includes('APROV'))                       return'A';
+  if(s==='L'||s.includes('LIBER'))                       return'L';
+  if(s==='C'||s.includes('CANCEL'))                      return'C';
   if(qtd>0){if(quje<=0)return'';if(quje>=qtd)return'L';return'P';}
   return '';
 }
 function nStSC(v,quantPed,quant){
   const s=String(v||'').toUpperCase().trim();
-  if(!s||s==='PENDENTE'||s==='ABERTO')return'P';            // Pendente
-  if(s==='E'||s.includes('COTAC')||s.includes('COTAÇ')) return'E'; // Em cotação
-  if(s==='L'||s.includes('LIBER'))                       return'L'; // Liberada
-  if(s==='G'||s.includes('GERO')||s.includes('PEDIDO')) return'G'; // Gerou pedido
-  if(s==='B'||s.includes('BLOQ'))                        return'B'; // Bloqueada
-  if(s==='R'||s.includes('REJEIT'))                      return'R'; // Rejeitada
-  if(s==='C'||s.includes('CANCEL'))                      return'C'; // Cancelada
-  /* Inferir: se já gerou quantidade em pedido = status G */
+  if(!s||s==='PENDENTE'||s==='ABERTO')return'P';
+  if(s==='E'||s.includes('COTAC')||s.includes('COTAÇ')) return'E';
+  if(s==='L'||s.includes('LIBER'))                       return'L';
+  if(s==='G'||s.includes('GERO')||s.includes('PEDIDO')) return'G';
+  if(s==='B'||s.includes('BLOQ'))                        return'B';
+  if(s==='R'||s.includes('REJEIT'))                      return'R';
+  if(s==='C'||s.includes('CANCEL'))                      return'C';
   if(!v&&quantPed>0) return'G';
   return'P';
 }
 function nNum(v){if(v===null||v===undefined||v==='')return 0;if(typeof v==='number')return+v.toFixed(4)*1||0;return+(String(v).replace(',','.').replace(/[^\d.-]/g,''))||0;}
 
-/* ── Funções de mapeamento puro (sem efeito colateral) usadas pelos chunks ── */
 function mapPC(rows,offset){
   return rows.map(function(r,i){
     const filialRaw=mp(r,'C7_FILIAL','Filial','filial')||'';
@@ -1922,7 +1774,7 @@ function rAjuda(){
 }
 
 // ═══════════════════════════════════════════════
-// PERSISTÊNCIA — IndexedDB (sem limite de tamanho, não trava a UI)
+// PERSISTÊNCIA — IndexedDB
 // ═══════════════════════════════════════════════
 let _db = null;
 let _saveTimer = null;
@@ -1930,7 +1782,6 @@ let _saveTimer = null;
 function abrirDB(){
   return new Promise(function(res,rej){
     if(_db){res(_db);return;}
-    /* Versão 3: store 'dados' para strings JSON + store 'blobs' para datasets grandes */
     const req=indexedDB.open('MonitorCompras',3);
     req.onupgradeneeded=function(e){
       const db=e.target.result;
@@ -1942,11 +1793,9 @@ function abrirDB(){
   });
 }
 
-/* Comprime string JSON usando CompressionStream (suportado em Chrome/Edge/Firefox modernos)
-   Para datasets de 123k itens: ~15MB JSON → ~2MB comprimido */
 async function comprimirJSON(obj){
   const json=JSON.stringify(obj);
-  if(!window.CompressionStream) return json; /* fallback: string pura */
+  if(!window.CompressionStream) return json;
   const enc=new TextEncoder();
   const stream=new CompressionStream('gzip');
   const writer=stream.writable.getWriter();
@@ -1959,7 +1808,6 @@ async function comprimirJSON(obj){
     if(done)break;
     chunks.push(value);
   }
-  /* Retorna Blob comprimido */
   return new Blob(chunks,{type:'application/gzip'});
 }
 
@@ -1987,32 +1835,29 @@ async function descomprimirJSON(val){
   return JSON.parse(json);
 }
 
-/* salvar — debounced 800ms para não serializar a cada keystroke */
 function salvar(){
   clearTimeout(_saveTimer);
   _saveTimer=setTimeout(_salvarAgora,800);
 }
 
-/* _salvarAgora — usa compressão gzip + IndexedDB; retorna Promise para encadeamento */
 async function _salvarAgora(){
   clearTimeout(_saveTimer);
   setSyncStatus('💾 Salvando…');
   const ts=new Date().toLocaleTimeString('pt-BR');
   try{
-    /* Comprimir em paralelo */
     const [pcBlob,scBlob,estBlob]=await Promise.all([
       comprimirJSON(S.pc),
       comprimirJSON(S.sc),
       comprimirJSON(S.est),
     ]);
     const db=await abrirDB();
-    const store=S.est.length>10000?'blobs':'dados'; /* blobs para datasets grandes */
+    const store=S.est.length>10000?'blobs':'dados';
     const tx=db.transaction([store,'dados'],'readwrite');
     tx.objectStore(store).put(pcBlob,'pc');
     tx.objectStore(store).put(scBlob,'sc');
     tx.objectStore(store).put(estBlob,'est');
     tx.objectStore('dados').put(ts,'ts');
-    tx.objectStore('dados').put(store,'store_key'); /* salvar qual store foi usado */
+    tx.objectStore('dados').put(store,'store_key');
     tx.oncomplete=function(){
       setSyncStatus('✓ Salvo às '+ts);
       try{localStorage.setItem('mcp_ts',ts);}catch(_){}
@@ -2020,7 +1865,6 @@ async function _salvarAgora(){
     tx.onerror=function(){ setSyncStatus('⚠ Erro ao salvar'); };
   }catch(err){
     console.error('Save error:',err);
-    /* Fallback: localStorage com JSON puro (pode falhar em datasets grandes) */
     try{
       localStorage.setItem('mcp_pc',JSON.stringify(S.pc));
       localStorage.setItem('mcp_sc',JSON.stringify(S.sc));
@@ -2035,8 +1879,26 @@ function setSyncStatus(msg){
   if(el) el.textContent=msg;
 }
 
+/* Detecta e descarta automaticamente dados de demonstração salvos em versões anteriores */
+const DEMO_CODES=['AÇO001','PAR002','LUV003','TIN004','FIL005','COR006','ROL007','OLE008','VAL009','FIT010'];
+function isDemoData(arr,campo){
+  if(!arr||!arr.length) return false;
+  return arr.slice(0,10).some(function(r){return DEMO_CODES.includes(String(r[campo]||''));});
+}
+function limparDemoSeNecessario(){
+  const eDemo=isDemoData(S.pc,'C7_PRODUTO')||isDemoData(S.sc,'C1_PRODUTO')||isDemoData(S.est,'B1_COD');
+  if(!eDemo) return;
+  S.pc=[];S.sc=[];S.est=[];S.idx={pc:[],sc:[],est:[]};
+  S.vs.est._data=[];S.vs.est.start=0;
+  abrirDB().then(function(db){
+    try{const tx=db.transaction('dados','readwrite');['pc','sc','est','ts','store_key'].forEach(function(k){try{tx.objectStore('dados').delete(k);}catch(_){}});}catch(_){}
+    try{const tx=db.transaction('blobs','readwrite');['pc','sc','est'].forEach(function(k){try{tx.objectStore('blobs').delete(k);}catch(_){}});}catch(_){}
+  }).catch(function(){});
+  ['mcp_pc','mcp_sc','mcp_est','mcp_ts'].forEach(function(k){try{localStorage.removeItem(k);}catch(_){}});
+  setSyncStatus('Pronto');
+}
+
 async function carregar(){
-  /* 1ª tentativa: IndexedDB (suporta datasets grandes comprimidos) */
   try{
     const db=await abrirDB();
     const storeKey=await new Promise(function(res){
@@ -2066,19 +1928,19 @@ async function carregar(){
         if(re.result) descomprimirJSON(re.result).then(function(d){if(d&&d.length)S.est=d;done();}).catch(done);
         else done();
       }; re.onerror=done;
-      /* Timestamp sempre vem da store 'dados' */
       const rtx=db.transaction('dados','readonly');
       const rt=rtx.objectStore('dados').get('ts');
       rt.onsuccess=function(){if(rt.result)setSyncStatus('✓ Salvo às '+rt.result);done();};
       rt.onerror=done;
     });
-    /* Se IndexedDB estava vazio, tentar localStorage como backup */
     if(!S.pc.length&&!S.sc.length&&!S.est.length){
       _carregarLocalStorage();
     }
+    limparDemoSeNecessario();
   }catch(err){
     console.warn('IndexedDB falhou, carregando localStorage:',err);
     _carregarLocalStorage();
+    limparDemoSeNecessario();
   }
 }
 
@@ -2098,6 +1960,7 @@ function _carregarLocalStorage(){
 function limpar(){
   if(!confirm('Limpar todos os dados importados?'))return;
   S.pc=[];S.sc=[];S.est=[];S.idx={pc:[],sc:[],est:[]};
+  S.vs.est._data=[];S.vs.est.start=0;
   abrirDB().then(function(db){
     const tx=db.transaction('dados','readwrite');
     const st=tx.objectStore('dados');
@@ -2161,38 +2024,28 @@ function bindDrop(){
 // ═══════════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════════
-/* Init assíncrono: carrega IndexedDB antes de renderizar */
 carregar().then(function(){
   if(S.pc.length) rebuildIdxPC();
   if(S.sc.length) rebuildIdxSC();
   if(S.est.length) rebuildIdxEst();
-  if(!S.pc.length&&!S.sc.length&&!S.est.length) gerarDemo();
   updBadges();
   render();
 }).catch(function(){
-  gerarDemo();
   updBadges();
   render();
 });
 
-/* ── Salvar automaticamente ao sair ou trocar de aba ──────────────────────
-   beforeunload: dispara quando o usuário fecha ou navega para fora
-   visibilitychange: dispara quando minimiza ou troca de aba
-   Garante que NENHUM dado seja perdido ao fechar o monitor */
 window.addEventListener('beforeunload', function(){
-  /* Salvar síncrono via localStorage como seguro de emergência */
   try{
     if(S.pc.length)  localStorage.setItem('mcp_pc',  JSON.stringify(S.pc));
     if(S.sc.length)  localStorage.setItem('mcp_sc',  JSON.stringify(S.sc));
     if(S.est.length) localStorage.setItem('mcp_est', JSON.stringify(S.est));
     localStorage.setItem('mcp_ts', new Date().toLocaleTimeString('pt-BR'));
   }catch(_){}
-  /* IndexedDB assíncrono também é disparado — pode ou não completar antes do unload */
   _salvarAgora();
 });
 
 document.addEventListener('visibilitychange', function(){
-  /* Quando o usuário minimiza ou troca de aba — salvar no IndexedDB */
   if(document.visibilityState==='hidden'){
     _salvarAgora();
   }
