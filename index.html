@@ -36,7 +36,7 @@
 body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden;-webkit-font-smoothing:antialiased;}
 
 /* ─── SCROLLBAR ──────────────────────────────────────────────────────────── */
-::-webkit-scrollbar{width:5px;height:5px;}
+::-webkit-scrollbar{width:6px;height:6px;}
 ::-webkit-scrollbar-track{background:transparent;}
 ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:99px;}
 ::-webkit-scrollbar-thumb:hover{background:#364070;}
@@ -176,6 +176,23 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 .sh-title{font-size:20px;font-weight:700;margin-bottom:4px;letter-spacing:-.02em;}
 .sh-sub{font-size:12px;color:var(--muted);}
 
+/* ABAS DE FILIAIS (NOVO) */
+.ftabs{
+  display:flex; gap:8px; overflow-x:auto; margin-bottom:16px; padding-bottom:8px;
+}
+.ftab{
+  padding:7px 16px; border-radius:99px; font-size:12px; font-weight:600; cursor:pointer;
+  border:1px solid var(--border); background:var(--surface2); color:var(--muted);
+  transition:all .15s; white-space:nowrap; display:inline-flex; align-items:center; gap:6px;
+}
+.ftab.active{
+  background:rgba(79,124,255,.12); color:var(--accent); border-color:rgba(79,124,255,.35);
+  box-shadow:0 0 12px rgba(79,124,255,.15);
+}
+.ftab:hover:not(.active){
+  background:var(--surface3); color:var(--text); border-color:var(--border2);
+}
+
 /* ─── KPI ────────────────────────────────────────────────────────────────── */
 .kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:22px;}
 .kpi{
@@ -258,7 +275,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 }
 #tw-est{
   overflow:auto !important;
-  max-height:calc(100vh - 260px);
+  max-height:calc(100vh - 300px);
 }
 table{width:100%;border-collapse:collapse;font-size:12px;}
 thead{background:var(--surface2);position:sticky;top:0;z-index:2;}
@@ -674,7 +691,7 @@ const S = {
   pg:'dashboard',
   pc:[], sc:[], est:[],
   idx:{pc:[],sc:[],est:[]},
-  f:{tipo:'todos',status:'todos',busca:'',filial:'todos',comprador:'todos'},
+  f:{tipo:'todos',status:'todos',busca:'',filial:'todos',comprador:'todos', filial_aba:''},
   sort:{campo:'',dir:1},
   itab:'mata121',
   vs:{est:{start:0,_data:[]},pc:{start:0},sc:{start:0}},
@@ -721,7 +738,7 @@ function nav(pg){
   document.querySelectorAll('.ni').forEach((el,i)=>el.classList.toggle('active',PAGES[i]===pg));
   document.getElementById('ptitle').innerHTML=
     (TITLES[pg]||pg)+(SUBS[pg]?` <span class="tb-sub">${SUBS[pg]}</span>`:'');
-  S.f={tipo:'todos',status:'todos',busca:'',filial:'todos',comprador:'todos'};
+  S.f={tipo:'todos',status:'todos',busca:'',filial:'todos',comprador:'todos',filial_aba:S.f.filial_aba};
   const c=document.getElementById('content');
   c.style.opacity='0';
   setTimeout(()=>{render();c.style.transition='opacity .18s';c.style.opacity='1';},70);
@@ -743,7 +760,8 @@ let _rtTimer=null;
 function renderTabela(immediate){
   clearTimeout(_rtTimer);
   if(immediate){ _doRenderTabela(); return; }
-  _rtTimer=setTimeout(_doRenderTabela, 150); // Debounce de filtro mais curto
+  // Debounce aumentado para 250ms para evitar travamento ao digitar rápido
+  _rtTimer=setTimeout(_doRenderTabela, 250); 
 }
 
 function _doRenderTabela(){
@@ -760,7 +778,9 @@ function _doRenderTabela(){
     tb.innerHTML=rowsSC(d);
   } else if(S.pg==='estoque'){
     const d=getFEst();
-    if(cnt) cnt.textContent=d.length+' / '+S.est.length;
+    // Como filtramos por Aba (Filial), o total agora é baseado no subset da filial
+    const filialTotal = S.est.filter(x => x.B1_FILIAL === S.f.filial_aba).length;
+    if(cnt) cnt.textContent=d.length+' / '+filialTotal;
     S.vs.est._data=d;
     S.vs.est.start=0;
     renderVEst();
@@ -768,17 +788,17 @@ function _doRenderTabela(){
 }
 
 // ═══════════════════════════════════════════════
-// ROLAGEM VIRTUAL - ULTRA RÁPIDA
+// ROLAGEM VIRTUAL - ULTRA RÁPIDA (Otimizada)
 // ═══════════════════════════════════════════════
 const VROW_H=36;
-const VPAGE=60;
+const VPAGE=100; // Carrega 100 itens para rolagem suave
 
 function renderVEst(){
   const tb=document.getElementById('tbody-main');
   if(!tb)return;
   const d=S.vs.est._data||[];
   if(!d.length){
-    tb.innerHTML='<tr><td colspan="24"><div class="empty"><div class="empty-i">📦</div><div class="empty-t">Nenhum produto encontrado</div><div class="empty-s">Ajuste os filtros ou importe MATR290</div></div></td></tr>';
+    tb.innerHTML='<tr><td colspan="23"><div class="empty"><div class="empty-i">📦</div><div class="empty-t">Nenhum produto encontrado nesta filial</div><div class="empty-s">Ajuste os filtros ou selecione outra aba</div></div></td></tr>';
     return;
   }
   const start=S.vs.est.start||0;
@@ -787,9 +807,9 @@ function renderVEst(){
   const after=Math.max(0,(d.length-start-VPAGE))*VROW_H;
   let html='';
   // Espaçadores virtuais superleves para o navegador
-  if(before>0) html+=`<tr style="border:none"><td colspan="24" style="height:${before}px;padding:0;border:none"></td></tr>`;
-  html+=rowsEst(slice, start, d);
-  if(after>0) html+=`<tr style="border:none"><td colspan="24" style="height:${after}px;padding:0;border:none"></td></tr>`;
+  if(before>0) html+=`<tr style="border:none"><td colspan="23" style="height:${before}px;padding:0;border:none"></td></tr>`;
+  html+=rowsEst(slice);
+  if(after>0) html+=`<tr style="border:none"><td colspan="23" style="height:${after}px;padding:0;border:none"></td></tr>`;
   tb.innerHTML=html;
 }
 
@@ -904,7 +924,7 @@ function rDash(){
 }
 
 // ═══════════════════════════════════════════════
-// ORDENAÇÃO RÁPIDA (Substitui localeCompare)
+// ORDENAÇÃO RÁPIDA
 // ═══════════════════════════════════════════════
 function sortArr(d, campo, dir, dc) {
     d.sort((a,b) => {
@@ -915,7 +935,7 @@ function sortArr(d, campo, dir, dc) {
       if(typeof av === 'number' && typeof bv === 'number') return (av-bv)*dir;
       if(!isNaN(av) && !isNaN(bv)) return ((+av)-(+bv))*dir;
       
-      // Strings (Operador < e > é ~100x mais rápido que localeCompare)
+      // Strings 
       const sa = String(av||'').toLowerCase();
       const sb = String(bv||'').toLowerCase();
       if(sa < sb) return -1 * dir;
@@ -1096,15 +1116,19 @@ function rSC(){
 }
 
 // ═══════════════════════════════════════════════
-// ESTOQUE MATR290
+// ESTOQUE MATR290 (ABAS POR FILIAL OTIMIZADO)
 // ═══════════════════════════════════════════════
 function getFEst(){
   const b=S.f.busca.toLowerCase();
   const idx=S.idx.est;
   const d=[];
+  
+  // Strict Filial Filtering for the Tabs
   for(let i=0; i<S.est.length; i++) {
     const x = S.est[i];
-    if(S.f.filial&&S.f.filial!=='todos'&&x.B1_FILIAL!==S.f.filial) continue;
+    
+    if(x.B1_FILIAL !== S.f.filial_aba) continue; // FILTRA APENAS A ABA ATUAL
+    
     if(S.f.status==='ponto') { if(!((+x.PONTO_PEDIDO||0)>0)) continue; }
     if(S.f.status==='critico'&&(+x.DISPONIVEL||0)>0) continue;
     if(S.f.status==='baixo'){
@@ -1112,41 +1136,28 @@ function getFEst(){
       if(!(disp>0&&disp<=qatu*.2)) continue;
     }
     if(b&&!(idx[i]||'').includes(b)) continue;
+    
     d.push(x);
   }
   
   if(S.sort.campo){
     sortArr(d, S.sort.campo, S.sort.dir, ['ULT_SAIDA']);
   } else {
-    // Ordenação padrão ultra-rápida (Filial > Código)
+    // Ordenação padrão ultra-rápida (Apenas por código, já que é 1 filial só)
     d.sort((a,b) => {
-       const fA = String(a.B1_FILIAL||'').toLowerCase();
-       const fB = String(b.B1_FILIAL||'').toLowerCase();
-       if(fA === fB) {
-           const cA = String(a.B1_COD||'').toLowerCase();
-           const cB = String(b.B1_COD||'').toLowerCase();
-           if(cA < cB) return -1;
-           if(cA > cB) return 1;
-           return 0;
-       }
-       return fA < fB ? -1 : 1;
+       const cA = String(a.B1_COD||'').toLowerCase();
+       const cB = String(b.B1_COD||'').toLowerCase();
+       if(cA < cB) return -1;
+       if(cA > cB) return 1;
+       return 0;
     });
   }
   return d;
 }
 
-function rowsEst(slice, start, fullData){
+function rowsEst(slice){
   if(!slice.length) return '';
-  return slice.map(function(r, i){
-    const absIdx = start + i;
-    const prevR = absIdx > 0 ? fullData[absIdx - 1] : null;
-    let groupHdr = '';
-    
-    // Header visual por filial sempre na primeira linha da Viewport ou quando muda
-    if(S.f.filial === 'todos' && (i === 0 || !prevR || prevR.B1_FILIAL !== r.B1_FILIAL)) {
-        groupHdr = `<tr style="background:var(--surface3);border-top:2px solid var(--border2)"><td colspan="24" style="padding:10px 14px;font-weight:700;color:var(--accent);font-size:12px;text-transform:uppercase;letter-spacing:.05em;position:sticky;left:0">🏢 Filial: ${r.B1_FILIAL||'Sem Filial'}</td></tr>`;
-    }
-
+  return slice.map(function(r){
     const disp=+r.DISPONIVEL||0,qatu=+r.B2_QATU||0;
     const pct=qatu>0?disp/qatu:0;
     const sit=disp<=0?'Crítico':pct<.2?'Baixo':'Normal';
@@ -1155,8 +1166,7 @@ function rowsEst(slice, start, fullData){
     const pp =+r.PONTO_PEDIDO||0;
     const ppClr=pp>0?'color:var(--accent);font-weight:600':'color:var(--muted)';
     
-    return groupHdr + '<tr class="est-row" data-filial="'+encodeURIComponent(r.B1_FILIAL||'')+'" data-cod="'+encodeURIComponent(r.B1_COD||'')+'" style="cursor:pointer">'
-      +'<td class="mn" style="font-size:11px">'+(r.B1_FILIAL||'')+'</td>'
+    return '<tr class="est-row" data-filial="'+encodeURIComponent(r.B1_FILIAL||'')+'" data-cod="'+encodeURIComponent(r.B1_COD||'')+'" style="cursor:pointer">'
       +'<td class="mn" style="font-weight:600">'+(r.B1_COD||'')+'</td>'
       +'<td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="'+(r.B1_DESC||'')+'">'+(r.B1_DESC||'')+'</td>'
       +'<td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--muted)" title="'+(r.B1_DESC_CIEN||'')+'">'+(r.B1_DESC_CIEN||'')+'</td>'
@@ -1199,31 +1209,45 @@ function bindEstClick(){
 }
 
 function rEst(){
+  // Extrai filiais e define a ativa
+  const filiais=[...new Set(S.est.map(x=>x.B1_FILIAL).filter(Boolean))].sort();
+  if(filiais.length > 0 && (!S.f.filial_aba || !filiais.includes(S.f.filial_aba))) {
+      S.f.filial_aba = filiais[0];
+  }
+  
   const d=getFEst();
   S.vs.est._data=d;
   S.vs.est.start=0;
-  const filiais=[...new Set(S.est.map(x=>x.B1_FILIAL).filter(Boolean))].sort();
-  const fDesc=f=>{const e=S.est.find(x=>x.B1_FILIAL===f);return e&&e.B1_FILIAL_DESC?e.B1_FILIAL_DESC:f;};
+  
+  const filialTotal = S.est.filter(x => x.B1_FILIAL === S.f.filial_aba).length;
+
+  const tabsHtml = filiais.map(f => {
+    return `<button class="ftab ${S.f.filial_aba === f ? 'active' : ''}" onclick="S.f.filial_aba='${f}'; S.vs.est.start=0; document.getElementById('tw-est').scrollTop=0; renderTabela(true)">
+      🏢 Filial ${f}
+    </button>`;
+  }).join('');
+
   return`
-  <div class="sh"><div class="sh-title">Análise de Estoque</div><div class="sh-sub">MATR290 · ${S.est.length} produtos · ${filiais.length} filiais</div></div>
+  <div class="sh"><div class="sh-title">Análise de Estoque</div><div class="sh-sub">MATR290 · ${S.est.length} produtos totais · ${filiais.length} filiais</div></div>
+  
+  <div class="ftabs">
+    ${tabsHtml || '<span style="color:var(--muted);font-size:12px">Nenhuma filial encontrada. Importe dados do MATR290.</span>'}
+  </div>
+
   <div class="filters">
     <input id="busca-est" class="finp" placeholder="🔍  Buscar código, descrição, grupo..." value="${S.f.busca}"
       oninput="S.f.busca=this.value;renderTabela()"/>
-    <select class="fsel" onchange="S.f.filial=this.value;renderTabela()">
-      <option value="todos">Todas as filiais</option>
-      ${filiais.map(f=>`<option value="${f}" ${(S.f.filial||'todos')===f?'selected':''}>${fDesc(f)}</option>`).join('')}
-    </select>
+    
     <select class="fsel" onchange="S.f.status=this.value;renderTabela()">
-      <option value="todos">Todos os produtos</option>
+      <option value="todos">Todos os produtos da filial</option>
       <option value="ponto" ${S.f.status==='ponto'?'selected':''}>🔔 Com Ponto de Pedido</option>
       <option value="critico" ${S.f.status==='critico'?'selected':''}>🔴 Saldo zero / negativo</option>
       <option value="baixo" ${S.f.status==='baixo'?'selected':''}>🟡 Saldo baixo (&lt;20%)</option>
     </select>
-    <span id="filter-count" class="fcnt">${d.length} / ${S.est.length}</span>
+    <span id="filter-count" class="fcnt">${d.length} / ${filialTotal} nesta aba</span>
   </div>
   <div class="tw" id="tw-est" onscroll="onScrollEst(this)"><table>
     <thead><tr>
-      <th onclick="so('B1_FILIAL')">Filial ↕</th>
       <th onclick="so('B1_COD')">Código ↕</th>
       <th onclick="so('B1_DESC')">Descrição ↕</th>
       <th onclick="so('B1_DESC_CIEN')">Desc. Cientifica ↕</th>
@@ -1248,7 +1272,7 @@ function rEst(){
       <th onclick="so('DISPONIVEL')" style="background:var(--surface3)">Disponível ↕</th>
       <th style="background:var(--surface3)">Situação</th>
     </tr></thead>
-    <tbody id="tbody-main">${rowsEst(d, 0, d)}</tbody>
+    <tbody id="tbody-main">${rowsEst(d)}</tbody>
   </table></div>`;
 }
 
@@ -1577,7 +1601,7 @@ function hideProgress(){
 }
 
 // ═══════════════════════════════════════════════
-// WORKER E PROCESSAMENTO DE CHUNKS OTIMIZADO
+// WORKER E PROCESSAMENTO DE CHUNKS ANTITRAVAMENTO
 // ═══════════════════════════════════════════════
 function procFileObj(file, tipo){
   showProgress('📂 Lendo '+file.name+'…', 10);
@@ -1585,7 +1609,7 @@ function procFileObj(file, tipo){
   const rd = new FileReader();
   
   rd.onload = function(e){
-    showProgress('⚙️ Extraindo dados...', 30);
+    showProgress('⚙️ Extraindo dados (Pode demorar, não mude de tela)...', 30);
     
     const workerCode = document.getElementById('worker-script').textContent;
     const workerBlob = new Blob([workerCode], {type: 'application/javascript'});
@@ -1626,7 +1650,7 @@ function procFileObj(file, tipo){
 function processarEmChunks(rows,tipo){
   const total=rows.length;
   const processados=new Array(total);
-  let chunk=4000;
+  let chunk=2000; // Pedaço menor para evitar congelamento total
   let i=0;
   
   function step(){
@@ -1643,22 +1667,23 @@ function processarEmChunks(rows,tipo){
     i=fim;
     
     const elapsed=performance.now()-t0;
-    // Otimização de tempo de CPU: se foi muito rápido, aumenta o chunk; se demorou, reduz. Mantém o UI suave.
-    if(elapsed<16&&chunk<10000) chunk+=1000;
-    else if(elapsed>40&&chunk>500) chunk-=500;
+    
+    // Motor Adaptativo: Acelera se a máquina for rápida, desacelera se for lenta
+    if(elapsed < 10 && chunk < 8000) chunk += 500;
+    else if(elapsed > 30 && chunk > 500) chunk -= 500;
     
     const pct=60+Math.round((i/total)*30);
     showProgress('⚙️ Processando... '+i.toLocaleString('pt-BR')+' / '+total.toLocaleString('pt-BR'),pct);
     
     if(i<total){ 
-        setTimeout(step, 5); // Libera a UI
+        setTimeout(step, 15); // Tempo de respiro de 15ms para o DOM não travar
         return; 
     }
     
     showProgress('💾 Montando Tabela…',95);
-    setTimeout(function(){ finalizarImport(processados.filter(Boolean),tipo); },20);
+    setTimeout(function(){ finalizarImport(processados.filter(Boolean),tipo); },30);
   }
-  setTimeout(step, 5);
+  setTimeout(step, 10);
 }
 
 function finalizarImport(n,tipo){
@@ -1707,15 +1732,13 @@ function finalizarImport(n,tipo){
 }
 
 // ═══════════════════════════════════════════════
-// MAPPER ZERO-ALLOCATION (Resolve o travamento)
+// MAPPER ZERO-ALLOCATION (Resolve o travamento de RAM)
 // ═══════════════════════════════════════════════
 function mp(obj,...cs){
-  // 1. Caminho ultra-rápido: Chave exata
   for(let i=0; i<cs.length; i++){
     let val = obj[cs[i]];
     if(val !== undefined && val !== null && val !== '') return String(val).trim();
   }
-  // 2. Caminho moderado: Chave exata em letras minúsculas (sem expressões regulares pesadas)
   for(let k in obj) {
     let kl = k.toLowerCase();
     for(let i=0; i<cs.length; i++){
@@ -1914,15 +1937,17 @@ function limpar(){
 }
 function salvarManual(){ _salvarAgora(); toast('💾 Dados salvos!','success'); }
 function so(campo){if(S.sort.campo===campo)S.sort.dir*=-1;else{S.sort.campo=campo;S.sort.dir=1;}renderTabela(true);}
+
+// Scroll super leve usando aproximação por blocos
 function onScrollEst(el){
-  const d=S.vs.est._data;
   const scrollTop=el.scrollTop;
-  const newStart=Math.max(0,Math.floor(scrollTop/36)-10);
-  if(Math.abs(newStart-(S.vs.est.start||0))>10){
+  const newStart=Math.max(0,Math.floor(scrollTop/36)-15);
+  if(Math.abs(newStart-(S.vs.est.start||0))>20){
     S.vs.est.start=newStart;
     renderVEst();
   }
 }
+
 function toast(msg,tipo='info'){
   const w=document.getElementById('toasts');
   const t=document.createElement('div');t.className=`toast ${tipo}`;t.textContent=msg;
