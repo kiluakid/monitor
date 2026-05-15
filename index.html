@@ -482,11 +482,10 @@ input[type=file]{display:none;}
 <script id="worker-script" type="javascript/worker">
 self.onmessage = function(e) {
   try {
-    const type = e.data.type;
-    let resultado = [];
+    const { type, buffer, text, importType } = e.data;
     
-    // Tratamento de Datas Centralizado
-    function processarData(v) {
+    // FUNÇÕES COMPARTILHADAS (Datas, Mapeamento, etc)
+    function fmtData(v) {
       if (!v) return '';
       const s = String(v).trim();
       if (s.includes('GMT') || s.includes('UTC') || s.includes('Hora padrão')) {
@@ -511,46 +510,109 @@ self.onmessage = function(e) {
       return s;
     }
 
-    if (type === 'csv') {
-      const text = e.data.text;
-      const lines = text.split(/\r?\n/);
-      if (lines.length > 0) {
-        const sep = lines[0].split(';').length > lines[0].split(',').length ? ';' : ',';
-        const hdrLine = lines[0].split(sep).filter(c => c.trim()).length <= 2 ? 1 : 0;
-        const hdrs = lines[hdrLine].split(sep).map(h => h.trim().replace(/["']/g, ''));
-        for (let i = hdrLine + 1; i < lines.length; i++) {
-          if (!lines[i].trim()) continue;
-          const vals = lines[i].split(sep).map(v => v.trim().replace(/["']/g, ''));
-          const o = {};
-          hdrs.forEach((h, j) => {
-            // Aplicar tratamento de data direto no worker se for campo de data
-            let val = vals[j] || '';
-            if (h.toLowerCase().includes('data') || h.toLowerCase().includes('emissao') || h.toLowerCase().includes('entrega')) {
-              val = processarData(val);
-            }
-            o[h] = val;
-          });
-          resultado.push(o);
+    function _norm(s){ return String(s||'').trim().toLowerCase().replace(/[^a-z0-9]/g,''); }
+    function mp(obj,...cs){
+      for(const c of cs){
+        const hit = obj[c] || obj[c.trim()] || obj[c.trim().toLowerCase()];
+        if(hit !== undefined && hit !== null && hit !== '') return String(hit).trim();
+      }
+      const nc = cs.map(_norm);
+      for(const key of Object.keys(obj)){
+        const kn = _norm(key);
+        if(nc.some(c => kn.includes(c) || c.includes(kn))){
+          if(obj[key] !== undefined && obj[key] !== '') return String(obj[key]).trim();
         }
       }
-    } else {
-      importScripts('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
-      const buffer = e.data.buffer;
-      const wb = XLSX.read(buffer, { type: 'array', cellDates: true, dense: true });
-      
-      function normHdr(h) { return String(h||'').replace(/_x000D_/g,'').replace(/\r\n|\r|\n/g,' ').replace(/\s+/g,' ').trim(); }
-      function abaTemDados(hdrs) {
-        const flat = hdrs.map(h => normHdr(h).toLowerCase());
-        return flat.some(h => h === 'codigo' || h === 'filial' || h === 'key');
+      return '';
+    }
+
+    function nNum(v){if(!v)return 0; if(typeof v==='number')return+v.toFixed(4)*1||0; return+(String(v).replace(',','.').replace(/[^\d.-]/g,''))||0;}
+    function nTipo(v,um=''){const s=String(v).toUpperCase();const u=String(um).toUpperCase().trim();if(u==='SV')return'S';return(s==='S'||s.includes('DIRETO')||s.includes('SERVICO'))?'S':'R';}
+    function nStPC(v,quje,qtd){const s=String(v||'').toUpperCase().trim(); if(!s||s==='PENDENTE'||s==='ABERTO')return''; if(s==='E'||s.includes('COTAC'))return'E'; if(s==='P'||s.includes('PARCI'))return'P'; if(s==='A'||s.includes('APROV'))return'A'; if(s==='L'||s.includes('LIBER'))return'L'; if(s==='C'||s.includes('CANCEL'))return'C'; if(qtd>0){if(quje<=0)return'';if(quje>=qtd)return'L';return'P';} return '';}
+    function nStSC(v,quantPed,quant){const s=String(v||'').toUpperCase().trim(); if(!s||s==='PENDENTE'||s==='ABERTO')return'P'; if(s==='E'||s.includes('COTAC'))return'E'; if(s==='L'||s.includes('LIBER'))return'L'; if(s==='G'||s.includes('GERO')||s.includes('PEDIDO'))return'G'; if(s==='B'||s.includes('BLOQ'))return'B'; if(s==='R'||s.includes('REJEIT'))return'R'; if(s==='C'||s.includes('CANCEL'))return'C'; if(!v&&quantPed>0)return'G'; return'P';}
+
+    // MAPEAR LINHA DIRETO NO WORKER (Economiza MUITA memória)
+    function mapRow(r, tipo, idx, abaClean) {
+      if (tipo === 'pc') {
+        const um=mp(r,'Unidade','Unid Medida','C7_UM','um');
+        const quant=nNum(mp(r,'C7_QUANT','Quantidade','qtd'));
+        const quje=nNum(mp(r,'C7_QUJE','Qtd.Entregue','entregue'));
+        return {
+          C7_FILIAL: mp(r,'C7_FILIAL','Filial') || abaClean || '01',
+          C7_NUM: mp(r,'C7_NUM','Numero') || String(idx).padStart(6,'0'),
+          C7_ITEM: mp(r,'C7_ITEM','item') || String(idx).padStart(3,'0'),
+          C7_PRODUTO: mp(r,'C7_PRODUTO','Produto','codigo'),
+          C7_DESCRI: mp(r,'C7_DESCRI','Descricao'),
+          C7_FORNECE: mp(r,'C7_FORNECE','Fornecedor'),
+          C7_UM: um, C7_QUANT: quant, C7_PRUNIT: nNum(mp(r,'C7_PRUNIT','Prc Unitario')),
+          C7_TOTAL: nNum(mp(r,'C7_TOTAL','total')), C7_CC: mp(r,'C7_CC','Centro Custo'),
+          C7_TIPO: nTipo(mp(r,'C7_TIPO','tipo'),um),
+          C7_EMISSAO: fmtData(mp(r,'C7_EMISSAO','Data Emissao')),
+          C7_DATPRF: fmtData(mp(r,'C7_DATPRF','Dt. Entrega')),
+          C7_QUJE: quje, C7_STATUS: nStPC(mp(r,'C7_STATUS','status'),quje,quant),
+          C7_COMPRADOR: mp(r,'Comprador','C7_COMPRADOR')
+        };
+      } else if (tipo === 'sc') {
+        const um=mp(r,'Unid Medida','C1_UM');
+        const quant=nNum(mp(r,'C1_QUANT','Quantidade'));
+        const quantPed=nNum(mp(r,'Quant.em Ped','C1_QUJE'));
+        return {
+          C1_FILIAL: mp(r,'C1_FILIAL','Filial') || abaClean || '01',
+          C1_NUM: mp(r,'C1_NUM','Numero da SC') || String(idx).padStart(6,'0'),
+          C1_ITEM: mp(r,'C1_ITEM','Item da SC') || String(idx).padStart(4,'0'),
+          C1_PRODUTO: mp(r,'C1_PRODUTO','Produto'),
+          C1_DESCRI: mp(r,'C1_DESCRI','Descricao'),
+          C1_QUANT: quant, C1_QUJE: quantPed, C1_UM: um, C1_CC: mp(r,'C1_CC','Centro Custo'),
+          C1_EMISSAO: fmtData(mp(r,'C1_EMISSAO','DT Emissao')),
+          C1_DATPRF: fmtData(mp(r,'C1_DATPRF','necessidade')),
+          C1_SOLICIT: mp(r,'C1_SOLICIT','solicitante'),
+          C1_PEDIDO: mp(r,'C1_PEDIDO','pedido gerado'),
+          C1_STATUS: nStSC(mp(r,'C1_STATUS','status'),quantPed,quant)
+        };
+      } else { // ESTOQUE
+        const qatu = nNum(mp(r,'Saldo Atual','B2_QATU'));
+        const emp = nNum(mp(r,'Empenho','B2_EMPENHO'));
+        return {
+          B1_COD: mp(r,'Codigo','B1_COD','produto'),
+          B1_DESC: mp(r,'Descricao','B1_DESC'),
+          B1_FILIAL: mp(r,'Filial','B1_FILIAL') || abaClean || '01',
+          B1_FILIAL_DESC: abaClean || mp(r,'Filial','B1_FILIAL'), // Guarda o nome certinho
+          B1_UM: mp(r,'UM','B1_UM') || 'UN',
+          B1_GRUPO: mp(r,'Grupo','B1_GRUPO'),
+          B2_QATU: qatu, B2_EMPENHO: emp,
+          DISPONIVEL: +(qatu-emp).toFixed(4)*1,
+          PONTO_PEDIDO: nNum(mp(r,'Ponto Pedido')),
+          ULT_SAIDA: fmtData(mp(r,'DT.Ult.Saida','ultima saida')),
+          B2_SCS: nNum(mp(r,'SCs Colocadas')),
+          B2_PCS: nNum(mp(r,'PCs Colocados')),
+          MED_CONSUMO: nNum(mp(r,'Med. Consumo'))
+        };
       }
+    }
+
+    let globalIndex = 0;
+
+    // LER XLSX
+    if (type === 'xlsx') {
+      self.postMessage({ status: 'info', msg: 'Lendo arquivo Excel...', pct: 20 });
+      importScripts('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
+      
+      const wb = XLSX.read(buffer, { type: 'array', cellDates: true, dense: true });
+      self.postMessage({ status: 'info', msg: 'Extraindo abas...', pct: 40 });
 
       const nomes = wb.SheetNames;
-      const abaGeral = nomes.find(n => n.toLowerCase().includes('geral'));
-      const ABAS_IGNORAR = ['parametros','estoque zerado e prev entrega','dados rápido sc e pc','tratamento controle de endereç','dados rápidos qnt e end'];
-      let abas = abaGeral ? [abaGeral] : nomes.filter(n => !ABAS_IGNORAR.some(ig => n.toLowerCase().includes(ig.toLowerCase())));
+      const ABAS_IGNORAR = ['parametros','estoque zerado','dados rápido','controle de endereç'];
+      let abas = nomes.filter(n => !ABAS_IGNORAR.some(ig => n.toLowerCase().includes(ig)));
+      if(nomes.find(n => n.toLowerCase().includes('geral'))) abas = [nomes.find(n => n.toLowerCase().includes('geral'))];
 
-      for (const nome of abas) {
-        const ws = wb.Sheets[nome];
+      let chunk = [];
+      let abaCount = 0;
+
+      for (const aba of abas) {
+        abaCount++;
+        self.postMessage({ status: 'info', msg: `Processando aba ${abaCount}/${abas.length}...`, pct: 40 + Math.round((abaCount/abas.length)*40) });
+        
+        const ws = wb.Sheets[aba];
         if (!ws) continue;
         const arr = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, raw: true });
         if (!arr || arr.length < 2) continue;
@@ -561,29 +623,69 @@ self.onmessage = function(e) {
           if (row && row.filter(c => c !== null && c !== undefined && c !== '').length > 2) { hdrIdx = i; break; }
         }
         
-        const hdrs = arr[hdrIdx].map(normHdr);
-        if (!abaTemDados(hdrs)) continue;
+        const hdrs = arr[hdrIdx].map(h => String(h||'').replace(/_x000D_/g,'').trim());
         
+        // LIMPAR NOME DA ABA PARA SER A FILIAL PERFEITA
+        // Remove: "-Produ", "-Pr", "Produtos", " 2", etc.
+        let abaClean = aba.replace(/(-Produ.*|-Pr.*| Produtos.*|\s\d+)$/i, '').trim();
+
         for (let i = hdrIdx + 1; i < arr.length; i++) {
           const row = arr[i];
           if (!row || row.every(c => c === null || c === undefined || c === '')) continue;
-          const obj = { __aba__: nome };
+          
+          const obj = {};
           for (let j = 0; j < hdrs.length; j++) {
-            if (hdrs[j]) {
-              let val = row[j] !== null && row[j] !== undefined ? row[j] : '';
-              if (val instanceof Date || hdrs[j].toLowerCase().includes('data') || hdrs[j].toLowerCase().includes('emissao') || hdrs[j].toLowerCase().includes('entrega')) {
-                val = processarData(val);
-              }
-              obj[hdrs[j]] = val;
-            }
+            if (hdrs[j]) obj[hdrs[j]] = row[j] !== null && row[j] !== undefined ? row[j] : '';
           }
-          resultado.push(obj);
+          
+          globalIndex++;
+          const mapeado = mapRow(obj, importType, globalIndex, abaClean);
+          if(mapeado.B1_COD || mapeado.C7_PRODUTO || mapeado.C1_PRODUTO) {
+            chunk.push(mapeado);
+          }
+
+          if(chunk.length >= 3000) {
+            self.postMessage({ status: 'chunk', data: chunk });
+            chunk = []; // Limpa RAM
+          }
         }
       }
+      if(chunk.length > 0) self.postMessage({ status: 'chunk', data: chunk });
+      self.postMessage({ status: 'done' });
+
+    } 
+    // LER CSV
+    else if (type === 'csv') {
+      const lines = text.split(/\r?\n/);
+      if (lines.length > 0) {
+        const sep = lines[0].split(';').length > lines[0].split(',').length ? ';' : ',';
+        const hdrLine = lines[0].split(sep).filter(c => c.trim()).length <= 2 ? 1 : 0;
+        const hdrs = lines[hdrLine].split(sep).map(h => h.trim().replace(/["']/g, ''));
+        
+        let chunk = [];
+        for (let i = hdrLine + 1; i < lines.length; i++) {
+          if (!lines[i].trim()) continue;
+          const vals = lines[i].split(sep).map(v => v.trim().replace(/["']/g, ''));
+          const obj = {};
+          hdrs.forEach((h, j) => { obj[h] = vals[j] || ''; });
+          
+          globalIndex++;
+          const mapeado = mapRow(obj, importType, globalIndex, 'CSV_DATA');
+          if(mapeado.B1_COD || mapeado.C7_PRODUTO || mapeado.C1_PRODUTO) {
+             chunk.push(mapeado);
+          }
+
+          if(chunk.length >= 3000) {
+            self.postMessage({ status: 'chunk', data: chunk });
+            chunk = [];
+          }
+        }
+        if(chunk.length > 0) self.postMessage({ status: 'chunk', data: chunk });
+        self.postMessage({ status: 'done' });
+      }
     }
-    self.postMessage({ success: true, data: resultado });
   } catch (err) {
-    self.postMessage({ success: false, error: err.message });
+    self.postMessage({ status: 'error', error: err.message });
   }
 };
 </script>
@@ -700,25 +802,14 @@ function updBadges(){
 // ═══════════════════════════════════════════════
 // STATUS / TIPO helpers
 // ═══════════════════════════════════════════════
-const LPC={
-  '':'Pendente','P':'Parcial','E':'Em cotação','A':'Aprovado','L':'Liberado','C':'Cancelado',
-};
-const LSC={
-  'P':'Pendente','E':'Em cotação','L':'Liberada','G':'Gerou pedido','B':'Bloqueada','R':'Rejeitada','C':'Cancelada',
-};
-const CPC={
-  '':'ba','P':'bt','E':'bb','A':'bb','L':'bg','C':'br',
-};
-const CSC={
-  'P':'ba','E':'bb','L':'bg','G':'bg','B':'br','R':'br','C':'br',
-};
+const LPC={'':'Pendente','P':'Parcial','E':'Em cotação','A':'Aprovado','L':'Liberado','C':'Cancelado'};
+const LSC={'P':'Pendente','E':'Em cotação','L':'Liberada','G':'Gerou pedido','B':'Bloqueada','R':'Rejeitada','C':'Cancelada'};
+const CPC={'':'ba','P':'bt','E':'bb','A':'bb','L':'bg','C':'br'};
+const CSC={'P':'ba','E':'bb','L':'bg','G':'bg','B':'br','R':'br','C':'br'};
 
 function bpc(s){return`<span class="badge ${CPC[s]||'bz'}">${LPC[s]||s}</span>`;}
 function bsc(s){return`<span class="badge ${CSC[s]||'bz'}">${LSC[s]||s}</span>`;}
-function btipo(t){
-  const d=t==='S'?'DIRETO':'ESTOQUE';
-  return`<span class="tipo-b ${t==='S'?'td':'te'}">${d}</span>`;
-}
+function btipo(t){return`<span class="tipo-b ${t==='S'?'td':'te'}">${t==='S'?'DIRETO':'ESTOQUE'}</span>`;}
 function fmt(v){return(+v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});}
 
 // ═══════════════════════════════════════════════
@@ -731,8 +822,7 @@ const SUBS={pedidos:'MATA121 — SC7',sc:'MATA110 — SC1',estoque:'MATR290 — 
 function nav(pg){
   S.pg=pg;
   document.querySelectorAll('.ni').forEach((el,i)=>el.classList.toggle('active',PAGES[i]===pg));
-  document.getElementById('ptitle').innerHTML=
-    (TITLES[pg]||pg)+(SUBS[pg]?` <span class="tb-sub">${SUBS[pg]}</span>`:'');
+  document.getElementById('ptitle').innerHTML= (TITLES[pg]||pg)+(SUBS[pg]?` <span class="tb-sub">${SUBS[pg]}</span>`:'');
   S.f={tipo:'todos',status:'todos',busca:'',filial:'todos',comprador:'todos'};
   const c=document.getElementById('content');
   c.style.opacity='0';
@@ -757,8 +847,6 @@ function renderTabela(immediate){
   if(immediate){ _doRenderTabela(); return; }
   _rtTimer=setTimeout(_doRenderTabela, 200);
 }
-const VROW_H=36;
-const VPAGE=60;
 
 function _doRenderTabela(){
   const tb=document.getElementById('tbody-main');
@@ -790,9 +878,9 @@ function renderVEst(){
     return;
   }
   const start=S.vs.est.start||0;
-  const slice=d.slice(start,start+VPAGE);
-  const before=start*VROW_H;
-  const after=Math.max(0,(d.length-start-VPAGE))*VROW_H;
+  const slice=d.slice(start,start+60);
+  const before=start*36;
+  const after=Math.max(0,(d.length-start-60))*36;
   let html='';
   if(before>0) html+='<tr style="height:'+before+'px"><td colspan="15"></td></tr>';
   html+=rowsEst(slice);
@@ -800,15 +888,11 @@ function renderVEst(){
   tb.innerHTML=html;
 }
 
-// ═══════════════════════════════════════════════
-// FUNÇÃO DE DATA PARA EXIBIÇÃO (Limpa o Caché)
-// ═══════════════════════════════════════════════
-function fmtData(v) {
+function fmtDataUI(v) {
   if (v === null || v === undefined || v === '' || v === '0' || v === 0) return '';
   let dObj = null;
-  if (v instanceof Date) {
-    dObj = v;
-  } else {
+  if (v instanceof Date) dObj = v;
+  else {
     const s = String(v).trim();
     if (!s || s === 'null' || s === 'undefined') return '';
     if (/[a-zA-Z]/.test(s) || s.includes('-') || s.includes('T')) {
@@ -822,10 +906,7 @@ function fmtData(v) {
             if (yy < 100) yy += 2000;
             return String(dd).padStart(2,'0') + '/' + String(mm).padStart(2,'0') + '/' + yy;
         }
-        if (/^\d{8}$/.test(s)) {
-            const y = s.slice(0,4), m = s.slice(4,6), d = s.slice(6,8);
-            return d + '/' + m + '/' + y;
-        }
+        if (/^\d{8}$/.test(s)) return s.slice(6,8) + '/' + s.slice(4,6) + '/' + s.slice(0,4);
         const n = parseFloat(s.replace(',','.'));
         if (!isNaN(n) && n > 10000 && n < 80000 && !s.includes('/')) {
             const epoch = new Date(1899, 11, 30);
@@ -834,15 +915,13 @@ function fmtData(v) {
         }
     }
   }
-  if (dObj && !isNaN(dObj.getTime())) {
-    return String(dObj.getDate()).padStart(2, '0') + '/' + String(dObj.getMonth() + 1).padStart(2, '0') + '/' + String(dObj.getFullYear());
-  }
+  if (dObj && !isNaN(dObj.getTime())) return String(dObj.getDate()).padStart(2, '0') + '/' + String(dObj.getMonth() + 1).padStart(2, '0') + '/' + dObj.getFullYear();
   return String(v);
 }
 
 function dataOrd(v){
   if(!v)return 0;
-  const limpo = fmtData(v);
+  const limpo = fmtDataUI(v);
   const m=String(limpo).match(/(\d{2})\/(\d{2})\/(\d{4})/);
   if(m)return parseInt(m[3]+m[2]+m[1]);
   return 0;
@@ -937,7 +1016,7 @@ function getFPC(){
 }
 
 function rowsPC(d){
-  if(!d.length) return `<tr><td colspan="15"><div class="empty"><div class="empty-i">📋</div><div class="empty-t">Nenhum pedido encontrado</div><div class="empty-s">Ajuste os filtros ou importe MATA121</div></div></td></tr>`;
+  if(!d.length) return `<tr><td colspan="15"><div class="empty"><div class="empty-i">📋</div><div class="empty-t">Nenhum pedido encontrado</div></div></td></tr>`;
   return d.map(r=>`<tr onclick="vPC('${r.C7_NUM}','${r.C7_PRODUTO}')" style="cursor:pointer">
     <td class="mn">${r.C7_NUM}</td>
     <td>${btipo(r.C7_TIPO)}</td>
@@ -950,8 +1029,8 @@ function rowsPC(d){
     <td class="mn">R$&nbsp;${fmt(r.C7_PRUNIT)}</td>
     <td class="mn" style="font-weight:600">R$&nbsp;${fmt(r.C7_TOTAL)}</td>
     <td>${bpc(r.C7_STATUS)}</td>
-    <td class="mn" style="font-size:11px">${fmtData(r.C7_EMISSAO)}</td>
-    <td class="mn" style="font-size:11px">${fmtData(r.C7_DATPRF)}</td>
+    <td class="mn" style="font-size:11px">${fmtDataUI(r.C7_EMISSAO)}</td>
+    <td class="mn" style="font-size:11px">${fmtDataUI(r.C7_DATPRF)}</td>
     <td style="font-size:11px;color:var(--muted)">${r.C7_COMPRADOR||''}</td>
     <td><button class="btn btn-g" style="padding:4px 9px;font-size:11px" onclick="event.stopPropagation();vPC('${r.C7_NUM}','${r.C7_PRODUTO}')">Ver</button></td>
   </tr>`).join('');
@@ -962,25 +1041,20 @@ function rPC(){
   return`
   <div class="sh"><div class="sh-title">Pedidos de Compra</div><div class="sh-sub">MATA121 · Tabela SC7 · ${S.pc.length} registros</div></div>
   <div class="filters">
-    <input id="busca-pc" class="finp" placeholder="🔍  Buscar número, produto, fornecedor..." value="${S.f.busca}"
-      oninput="S.f.busca=this.value;renderTabela()"/>
+    <input id="busca-pc" class="finp" placeholder="🔍  Buscar número, produto..." value="${S.f.busca}" oninput="S.f.busca=this.value;renderTabela()"/>
     <select class="fsel" onchange="S.f.filial=this.value;renderTabela()">
       <option value="todos">Todas as filiais</option>
-      ${[...new Set(S.pc.map(x=>x.C7_FILIAL).filter(Boolean))].sort().map(f=>{const e=S.pc.find(x=>x.C7_FILIAL===f);const lbl=e&&e.C7_FILIAL_DESC?e.C7_FILIAL_DESC:f;return`<option value="${f}" ${(S.f.filial||'todos')===f?'selected':''}>${lbl}</option>`;}).join('')}
+      ${[...new Set(S.pc.map(x=>x.C7_FILIAL).filter(Boolean))].sort().map(f=>`<option value="${f}" ${(S.f.filial||'todos')===f?'selected':''}>${f}</option>`).join('')}
     </select>
     <select class="fsel" onchange="S.f.tipo=this.value;renderTabela()">
       <option value="todos" ${S.f.tipo==='todos'?'selected':''}>Todos os tipos</option>
-      <option value="R" ${S.f.tipo==='R'?'selected':''}>📦 Estoque (C7_TIPO=R)</option>
-      <option value="S" ${S.f.tipo==='S'?'selected':''}>🔧 Uso direto (C7_TIPO=S)</option>
+      <option value="R" ${S.f.tipo==='R'?'selected':''}>📦 Estoque</option>
+      <option value="S" ${S.f.tipo==='S'?'selected':''}>🔧 Uso direto</option>
     </select>
     <select class="fsel" onchange="S.f.status=this.value;renderTabela()">
       <option value="todos">Todos os status</option>
       <option value="" ${S.f.status===''?'selected':''}>🟡 Pendente</option>
       <option value="P" ${S.f.status==='P'?'selected':''}>🔵 Parcial</option>
-    </select>
-    <select class="fsel" onchange="S.f.comprador=this.value;renderTabela()">
-      <option value="todos">Todos os compradores</option>
-      ${[...new Set(S.pc.map(x=>x.C7_COMPRADOR).filter(Boolean))].sort().map(c=>`<option value="${c}" ${(S.f.comprador||'todos')===c?'selected':''}>${c}</option>`).join('')}
     </select>
     <span id="filter-count" class="fcnt">${d.length} / ${S.pc.length}</span>
   </div>
@@ -1025,7 +1099,7 @@ function getFSC(){
 }
 
 function rowsSC(d){
-  if(!d.length) return `<tr><td colspan="12"><div class="empty"><div class="empty-i">📝</div><div class="empty-t">Nenhuma solicitação encontrada</div><div class="empty-s">Ajuste os filtros ou importe MATA110</div></div></td></tr>`;
+  if(!d.length) return `<tr><td colspan="12"><div class="empty"><div class="empty-i">📝</div><div class="empty-t">Nenhuma solicitação encontrada</div></div></td></tr>`;
   return d.map(r=>`<tr onclick="vSC('${r.C1_NUM}')" style="cursor:pointer">
     <td class="mn">${r.C1_NUM}</td>
     <td>${btipo(r.C1_TIPO)}</td>
@@ -1036,8 +1110,8 @@ function rowsSC(d){
     <td class="mn" style="color:${+r.C1_QUJE>0?'var(--green)':'var(--muted)'}">${fmt(r.C1_QUJE)}</td>
     <td style="font-size:12px">${r.C1_SOLICIT}</td>
     <td>${bsc(r.C1_STATUS)}</td>
-    <td class="mn" style="font-size:11px">${fmtData(r.C1_EMISSAO)}</td>
-    <td class="mn" style="font-size:11px">${fmtData(r.C1_DATPRF)}</td>
+    <td class="mn" style="font-size:11px">${fmtDataUI(r.C1_EMISSAO)}</td>
+    <td class="mn" style="font-size:11px">${fmtDataUI(r.C1_DATPRF)}</td>
     <td>${r.C1_PEDIDO?`<span class="badge bt">${r.C1_PEDIDO}</span>`:'-'}</td>
     <td><button class="btn btn-g" style="padding:4px 9px;font-size:11px" onclick="event.stopPropagation();vSC('${r.C1_NUM}')">Ver</button></td>
   </tr>`).join('');
@@ -1048,16 +1122,15 @@ function rSC(){
   return`
   <div class="sh"><div class="sh-title">Solicitações de Compra</div><div class="sh-sub">MATA110 · Tabela SC1 · ${S.sc.length} registros</div></div>
   <div class="filters">
-    <input id="busca-sc" class="finp" placeholder="🔍  Buscar número, produto, solicitante..." value="${S.f.busca}"
-      oninput="S.f.busca=this.value;renderTabela()"/>
+    <input id="busca-sc" class="finp" placeholder="🔍  Buscar número, produto..." value="${S.f.busca}" oninput="S.f.busca=this.value;renderTabela()"/>
     <select class="fsel" onchange="S.f.filial=this.value;renderTabela()">
       <option value="todos">Todas as filiais</option>
-      ${[...new Set(S.sc.map(x=>x.C1_FILIAL).filter(Boolean))].sort().map(f=>{const e=S.sc.find(x=>x.C1_FILIAL===f);const lbl=e&&e.C1_FILIAL_DESC?e.C1_FILIAL_DESC:f;return`<option value="${f}" ${(S.f.filial||'todos')===f?'selected':''}>${lbl}</option>`;}).join('')}
+      ${[...new Set(S.sc.map(x=>x.C1_FILIAL).filter(Boolean))].sort().map(f=>`<option value="${f}" ${(S.f.filial||'todos')===f?'selected':''}>${f}</option>`).join('')}
     </select>
     <select class="fsel" onchange="S.f.tipo=this.value;renderTabela()">
       <option value="todos">Todos os tipos</option>
-      <option value="R" ${S.f.tipo==='R'?'selected':''}>📦 Estoque (C1_TIPO=R)</option>
-      <option value="S" ${S.f.tipo==='S'?'selected':''}>🔧 Uso direto (C1_TIPO=S)</option>
+      <option value="R" ${S.f.tipo==='R'?'selected':''}>📦 Estoque</option>
+      <option value="S" ${S.f.tipo==='S'?'selected':''}>🔧 Uso direto</option>
     </select>
     <select class="fsel" onchange="S.f.status=this.value;renderTabela()">
       <option value="todos">Todos os status</option>
@@ -1095,14 +1168,9 @@ function getFEst(){
   const d=[];
   S.est.forEach(function(x,i){
     if(S.f.filial&&S.f.filial!=='todos'&&x.B1_FILIAL!==S.f.filial) return;
-    if(S.f.status==='ponto'){
-      if(!((+x.PONTO_PEDIDO||0)>0)) return;
-    }
-    if(S.f.status==='critico'&&(+x.DISPONIVEL||0)>0) return;
-    if(S.f.status==='baixo'){
-      const disp=+x.DISPONIVEL||0,qatu=+x.B2_QATU||0;
-      if(!(disp>0&&disp<=qatu*.2)) return;
-    }
+    if(S.f.status==='ponto' && !((+x.PONTO_PEDIDO||0)>0)) return;
+    if(S.f.status==='critico' && (+x.DISPONIVEL||0)>0) return;
+    if(S.f.status==='baixo'){ const disp=+x.DISPONIVEL||0, qatu=+x.B2_QATU||0; if(!(disp>0&&disp<=qatu*.2)) return; }
     if(b&&!(idx[i]||'').includes(b)) return;
     d.push(x);
   });
@@ -1118,15 +1186,14 @@ function getFEst(){
 }
 
 function rowsEst(d){
-  if(!d.length) return '<tr><td colspan="15"><div class="empty"><div class="empty-i">📦</div><div class="empty-t">Nenhum produto encontrado</div><div class="empty-s">Ajuste os filtros ou importe MATR290</div></div></td></tr>';
+  if(!d.length) return '<tr><td colspan="15"><div class="empty"><div class="empty-i">📦</div><div class="empty-t">Nenhum produto encontrado</div></div></td></tr>';
   return d.map(function(r){
-    const disp=+r.DISPONIVEL||0,qatu=+r.B2_QATU||0;
+    const disp=+r.DISPONIVEL||0, qatu=+r.B2_QATU||0;
     const pct=qatu>0?disp/qatu:0;
     const sit=disp<=0?'Crítico':pct<.2?'Baixo':'Normal';
-    const sc =disp<=0?'br'    :pct<.2?'ba'   :'bg';
+    const sc=disp<=0?'br':pct<.2?'ba':'bg';
     const clr=disp<=0?'var(--red)':pct<.2?'var(--amber)':'var(--green)';
-    const pp =+r.PONTO_PEDIDO||0;
-    const ppClr=pp>0?'color:var(--accent);font-weight:600':'color:var(--muted)';
+    const pp=+r.PONTO_PEDIDO||0;
     return '<tr class="est-row" data-filial="'+encodeURIComponent(r.B1_FILIAL||'')+'" data-cod="'+encodeURIComponent(r.B1_COD||'')+'" style="cursor:pointer">'
       +'<td class="mn" style="font-size:11px">'+(r.B1_FILIAL||'')+'</td>'
       +'<td class="mn" style="font-weight:600">'+(r.B1_COD||'')+'</td>'
@@ -1139,8 +1206,8 @@ function rowsEst(d){
       +'<td class="mn" style="color:var(--teal)">'+fmt(+r.B2_SCS||0)+'</td>'
       +'<td class="mn" style="color:var(--accent)">'+fmt(+r.B2_PCS||0)+'</td>'
       +'<td class="mn" style="color:var(--muted2)">'+fmt(+r.MED_CONSUMO||0)+'</td>'
-      +'<td class="mn" style="'+ppClr+'">'+(pp>0?fmt(pp):'-')+'</td>'
-      +'<td class="mn" style="font-size:11px">'+fmtData(r.ULT_SAIDA||'-')+'</td>'
+      +'<td class="mn" style="'+(pp>0?'color:var(--accent);font-weight:600':'color:var(--muted)')+'">'+(pp>0?fmt(pp):'-')+'</td>'
+      +'<td class="mn" style="font-size:11px">'+fmtDataUI(r.ULT_SAIDA||'-')+'</td>'
       +'<td><span class="badge '+sc+'">'+sit+'</span></td>'
       +'<td><span class="badge bz" style="font-size:9.5px">'+(r.B1_CLASSE||'-')+'</span></td>'
       +'</tr>';
@@ -1155,26 +1222,24 @@ function bindEstClick(){
     if(S.pg!=='estoque') return;
     const tr=e.target.closest('tr.est-row');
     if(!tr) return;
-    const filial=decodeURIComponent(tr.dataset.filial||'');
-    const cod   =decodeURIComponent(tr.dataset.cod||'');
-    vEst(filial,cod);
+    vEst(decodeURIComponent(tr.dataset.filial||''), decodeURIComponent(tr.dataset.cod||''));
   });
 }
 
 function rEst(){
   const d=getFEst();
-  S.vs.est._data=d;
-  S.vs.est.start=0;
+  S.vs.est._data=d; S.vs.est.start=0;
+  
+  // Como as abas agora são limpas direto no worker, a filial será listada certinho!
   const filiais=[...new Set(S.est.map(x=>x.B1_FILIAL).filter(Boolean))].sort();
-  const fDesc=f=>{const e=S.est.find(x=>x.B1_FILIAL===f);return e&&e.B1_FILIAL_DESC?e.B1_FILIAL_DESC:f;};
+  
   return`
   <div class="sh"><div class="sh-title">Análise de Estoque</div><div class="sh-sub">MATR290 · ${S.est.length} produtos · ${filiais.length} filiais</div></div>
   <div class="filters">
-    <input id="busca-est" class="finp" placeholder="🔍  Buscar código, descrição, grupo..." value="${S.f.busca}"
-      oninput="S.f.busca=this.value;renderTabela()"/>
+    <input id="busca-est" class="finp" placeholder="🔍  Buscar código, descrição, grupo..." value="${S.f.busca}" oninput="S.f.busca=this.value;renderTabela()"/>
     <select class="fsel" onchange="S.f.filial=this.value;renderTabela()">
       <option value="todos">Todas as filiais</option>
-      ${filiais.map(f=>`<option value="${f}" ${(S.f.filial||'todos')===f?'selected':''}>${fDesc(f)}</option>`).join('')}
+      ${filiais.map(f=>`<option value="${f}" ${(S.f.filial||'todos')===f?'selected':''}>${f}</option>`).join('')}
     </select>
     <select class="fsel" onchange="S.f.status=this.value;renderTabela()">
       <option value="todos">Todos os produtos</option>
@@ -1210,85 +1275,38 @@ function rEst(){
 // MODAIS
 // ═══════════════════════════════════════════════
 function vEst(filial,cod){
-  const r=S.est.find(function(x){return x.B1_FILIAL===filial&&x.B1_COD===cod;});
+  const r=S.est.find(x=>x.B1_FILIAL===filial&&x.B1_COD===cod);
   if(!r)return;
-  const disp=+r.DISPONIVEL||0,qatu=+r.B2_QATU||0;
-  const pct=qatu>0?disp/qatu:0;
+  const disp=+r.DISPONIVEL||0,qatu=+r.B2_QATU||0, pct=qatu>0?disp/qatu:0;
   const [sit,sc]=disp<=0?['Crítico','br']:pct<.2?['Baixo','ba']:['Normal','bg'];
   document.getElementById('mc').innerHTML=`
-    <div class="mh">
-      <div class="mh-t">
-        ${r.B1_COD} — ${r.B1_DESC||''}
-        &nbsp;<span class="badge ${sc}">${sit}</span>
-        ${r.B1_CLASSE?`&nbsp;<span class="badge bz">Classe ${r.B1_CLASSE}</span>`:''}
-      </div>
+    <div class="mh"><div class="mh-t">${r.B1_COD} — ${r.B1_DESC||''} &nbsp;<span class="badge ${sc}">${sit}</span></div>
       <button class="mclose" onclick="closeM()">×</button>
     </div>
     <div class="mb">
       <div class="mrow">
-        <div class="mf"><div class="fl">Filial</div><div class="fv mn">${r.B1_FILIAL_DESC||r.B1_FILIAL}</div></div>
+        <div class="mf"><div class="fl">Filial</div><div class="fv mn">${r.B1_FILIAL}</div></div>
         <div class="mf"><div class="fl">Código</div><div class="fv mn">${r.B1_COD}</div></div>
         <div class="mf"><div class="fl">UM</div><div class="fv mn">${r.B1_UM||''}</div></div>
-        <div class="mf"><div class="fl">Tipo</div><div class="fv mn">${r.B1_TIPO||''}</div></div>
       </div>
-      <div class="mrow">
-        <div class="mf full"><div class="fl">Descrição</div><div class="fv">${r.B1_DESC||''}</div></div>
-      </div>
-      ${r.B1_DESC_CIEN&&r.B1_DESC_CIEN!==r.B1_DESC?`<div class="mrow"><div class="mf full"><div class="fl">Desc. Científica</div><div class="fv" style="font-size:12px;color:var(--muted2)">${r.B1_DESC_CIEN}</div></div></div>`:''}
-      <div class="mrow">
-        <div class="mf"><div class="fl">Grupo</div><div class="fv mn">${r.B1_GRUPO||'-'}</div></div>
-        <div class="mf"><div class="fl">Classe ABC</div><div class="fv mn">${r.B1_CLASSE||'-'}</div></div>
-        <div class="mf"><div class="fl">CL</div><div class="fv mn">${r.B1_CL||'-'}</div></div>
-        <div class="mf"><div class="fl">Contr. Endereç.</div><div class="fv mn">${r.CONTR_END||'-'}</div></div>
-      </div>
+      <div class="mrow"><div class="mf full"><div class="fl">Descrição</div><div class="fv">${r.B1_DESC||''}</div></div></div>
       <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;margin-bottom:12px">
         <div class="fl" style="margin-bottom:10px">SALDOS E MOVIMENTOS</div>
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
-          <div style="text-align:center">
-            <div style="font-size:10px;color:var(--muted);margin-bottom:4px">Saldo Atual</div>
-            <div style="font-size:20px;font-weight:700;font-family:var(--mono);color:var(--text)">${fmt(qatu)}</div>
-          </div>
-          <div style="text-align:center">
-            <div style="font-size:10px;color:var(--muted);margin-bottom:4px">Empenho</div>
-            <div style="font-size:20px;font-weight:700;font-family:var(--mono);color:var(--amber)">${fmt(+r.B2_EMPENHO||0)}</div>
-          </div>
-          <div style="text-align:center">
-            <div style="font-size:10px;color:var(--muted);margin-bottom:4px">Disponível</div>
-            <div style="font-size:20px;font-weight:700;font-family:var(--mono);color:${disp<=0?'var(--red)':pct<.2?'var(--amber)':'var(--green)'}">${fmt(disp)}</div>
-          </div>
-          <div style="text-align:center">
-            <div style="font-size:10px;color:var(--muted);margin-bottom:4px">Med. Consumo</div>
-            <div style="font-size:20px;font-weight:700;font-family:var(--mono);color:var(--muted2)">${fmt(+r.MED_CONSUMO||0)}</div>
-          </div>
+          <div style="text-align:center"><div style="font-size:10px;color:var(--muted);margin-bottom:4px">Saldo Atual</div><div style="font-size:20px;font-weight:700;font-family:var(--mono);color:var(--text)">${fmt(qatu)}</div></div>
+          <div style="text-align:center"><div style="font-size:10px;color:var(--muted);margin-bottom:4px">Empenho</div><div style="font-size:20px;font-weight:700;font-family:var(--mono);color:var(--amber)">${fmt(+r.B2_EMPENHO||0)}</div></div>
+          <div style="text-align:center"><div style="font-size:10px;color:var(--muted);margin-bottom:4px">Disponível</div><div style="font-size:20px;font-weight:700;font-family:var(--mono);color:${disp<=0?'var(--red)':pct<.2?'var(--amber)':'var(--green)'}">${fmt(disp)}</div></div>
+          <div style="text-align:center"><div style="font-size:10px;color:var(--muted);margin-bottom:4px">Med. Consumo</div><div style="font-size:20px;font-weight:700;font-family:var(--mono);color:var(--muted2)">${fmt(+r.MED_CONSUMO||0)}</div></div>
         </div>
       </div>
       <div class="mrow">
         <div class="mf"><div class="fl">SCs Colocadas</div><div class="fv mn" style="color:var(--teal)">${fmt(+r.B2_SCS||0)}</div></div>
         <div class="mf"><div class="fl">PCs Colocados</div><div class="fv mn" style="color:var(--accent)">${fmt(+r.B2_PCS||0)}</div></div>
-        <div class="mf"><div class="fl">OPs Colocadas</div><div class="fv mn">${fmt(+r.B2_OPS||0)}</div></div>
-        <div class="mf"><div class="fl">PVs Colocados</div><div class="fv mn">${fmt(+r.B2_PVS||0)}</div></div>
-      </div>
-      <div class="mrow">
+        <div class="mf"><div class="fl">Últ. Saída</div><div class="fv mn">${fmtDataUI(r.ULT_SAIDA||'-')}</div></div>
         <div class="mf"><div class="fl">Ponto Pedido</div><div class="fv mn">${fmt(+r.PONTO_PEDIDO||0)}</div></div>
-        <div class="mf"><div class="fl">Lote Econômico</div><div class="fv mn">${fmt(+r.LOTE_ECON||0)}</div></div>
-        <div class="mf"><div class="fl">Prazo Entrega</div><div class="fv mn">${fmt(+r.ENTREGA||0)} dias</div></div>
-        <div class="mf"><div class="fl">Estoque em Meses</div><div class="fv mn">${r.EST_MESES||'-'}</div></div>
       </div>
-      <div class="mrow">
-        <div class="mf"><div class="fl">Previsão de Entrega</div><div class="fv mn" style="color:var(--accent)">${fmt(+r.PREV_ENTREGA||0)}</div></div>
-        <div class="mf"><div class="fl">Últ. Saída</div><div class="fv mn">${fmtData(r.ULT_SAIDA||'-')}</div></div>
-        <div class="mf"><div class="fl">Custo Médio</div><div class="fv mn">R$ ${fmt(+r.B2_CM1||0)}</div></div>
-        <div class="mf"><div class="fl">Valor em Estoque</div><div class="fv mn" style="font-weight:700">R$ ${fmt(+r.B2_VATU1||0)}</div></div>
-      </div>
-      ${r.B1_OBS?`<div class="mrow"><div class="mf full"><div class="fl">Observação</div><div class="fv" style="color:var(--amber)">${r.B1_OBS}</div></div></div>`:''}
     </div>
-    <div class="mfoot">
-      <span style="font-size:12px;color:var(--muted);margin-right:auto">
-        Disponível: <strong style="color:${disp<=0?'var(--red)':pct<.2?'var(--amber)':'var(--green)'}">${fmt(disp)} ${r.B1_UM||''}</strong>
-        &nbsp;·&nbsp;Custo Médio: <strong>R$ ${fmt(+r.B2_CM1||0)}</strong>
-      </span>
-      <button class="btn btn-g" onclick="closeM()">Fechar</button>
-    </div>`;
+    <div class="mfoot"><button class="btn btn-g" onclick="closeM()">Fechar</button></div>`;
   document.getElementById('modal').style.display='flex';
 }
 
@@ -1297,75 +1315,28 @@ function vPC(num, prod){
   if(!todos.length)return;
   const r=prod?todos.find(x=>x.C7_PRODUTO===prod)||todos[0]:todos[0];
   const totalPC=todos.reduce((a,b)=>a+(+b.C7_TOTAL||0),0);
-  const itensHTML=todos.length>1?`
-    <div style="margin-top:14px">
-      <div class="fl" style="margin-bottom:7px">TODOS OS ITENS DESTE PEDIDO (${todos.length})</div>
-      <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
-        <table style="width:100%;border-collapse:collapse;font-size:11.5px">
-          <thead style="background:var(--surface2)">
-            <tr>
-              <th style="padding:7px 10px;text-align:left;color:var(--muted);font-size:10px;text-transform:uppercase">Produto</th>
-              <th style="padding:7px 10px;text-align:left;color:var(--muted);font-size:10px;text-transform:uppercase">Descrição</th>
-              <th style="padding:7px 10px;text-align:right;color:var(--muted);font-size:10px;text-transform:uppercase">Qtd/UN</th>
-              <th style="padding:7px 10px;text-align:right;color:var(--muted);font-size:10px;text-transform:uppercase">Pr.Unit</th>
-              <th style="padding:7px 10px;text-align:right;color:var(--muted);font-size:10px;text-transform:uppercase">Total</th>
-              <th style="padding:7px 10px;text-align:left;color:var(--muted);font-size:10px;text-transform:uppercase">Entrega</th>
-              <th style="padding:7px 10px;text-align:left;color:var(--muted);font-size:10px;text-transform:uppercase">SC</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${todos.map((it)=>`<tr style="border-top:1px solid var(--border);background:${it.C7_PRODUTO===r.C7_PRODUTO?'rgba(79,124,255,.07)':''}">
-              <td style="padding:7px 10px;font-family:var(--mono);font-size:11px">${it.C7_PRODUTO}</td>
-              <td style="padding:7px 10px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${it.C7_DESCRI}">${it.C7_DESCRI}</td>
-              <td style="padding:7px 10px;text-align:right;font-family:var(--mono)">${fmt(it.C7_QUANT)} ${it.C7_UM||''}</td>
-              <td style="padding:7px 10px;text-align:right;font-family:var(--mono)">R$&nbsp;${fmt(it.C7_PRUNIT)}</td>
-              <td style="padding:7px 10px;text-align:right;font-family:var(--mono);font-weight:600">R$&nbsp;${fmt(it.C7_TOTAL)}</td>
-              <td style="padding:7px 10px;font-family:var(--mono);font-size:11px">${fmtData(it.C7_DATPRF)}</td>
-              <td style="padding:7px 10px;font-family:var(--mono);font-size:11px">${it.C7_SOLICIT||'-'}</td>
-            </tr>`).join('')}
-            <tr style="border-top:2px solid var(--border2);background:var(--surface2)">
-              <td colspan="4" style="padding:7px 10px;font-size:11px;color:var(--muted)">Total do Pedido</td>
-              <td style="padding:7px 10px;text-align:right;font-family:var(--mono);font-weight:700;color:var(--green)">R$&nbsp;${fmt(totalPC)}</td>
-              <td colspan="2"></td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>`:'';
   document.getElementById('mc').innerHTML=`
-    <div class="mh">
-      <div class="mh-t">Pedido ${r.C7_NUM} &nbsp;${btipo(r.C7_TIPO)}&nbsp;${bpc(r.C7_STATUS)}
-        ${todos.length>1?`<span style="font-size:11px;color:var(--muted);font-weight:400;margin-left:8px">${todos.length} itens</span>`:''}
-      </div>
+    <div class="mh"><div class="mh-t">Pedido ${r.C7_NUM} &nbsp;${btipo(r.C7_TIPO)}&nbsp;${bpc(r.C7_STATUS)}</div>
       <button class="mclose" onclick="closeM()">×</button>
     </div>
     <div class="mb">
       <div class="mrow">
-        <div class="mf"><div class="fl">Filial</div><div class="fv mn" style="font-size:11px">${r.C7_FILIAL_DESC||r.C7_FILIAL}</div></div>
-        <div class="mf"><div class="fl">Número / Item</div><div class="fv mn">${r.C7_NUM}</div></div>
-        <div class="mf"><div class="fl">Emissão</div><div class="fv mn">${fmtData(r.C7_EMISSAO)}</div></div>
+        <div class="mf"><div class="fl">Filial</div><div class="fv mn" style="font-size:11px">${r.C7_FILIAL}</div></div>
+        <div class="mf"><div class="fl">Emissão</div><div class="fv mn">${fmtDataUI(r.C7_EMISSAO)}</div></div>
         <div class="mf"><div class="fl">Comprador</div><div class="fv" style="font-size:12px">${r.C7_COMPRADOR||'-'}</div></div>
       </div>
+      <div class="mrow"><div class="mf full"><div class="fl">Produto · Descrição</div><div class="fv">${r.C7_PRODUTO} — ${r.C7_DESCRI}</div></div></div>
+      <div class="mrow"><div class="mf full"><div class="fl">Fornecedor (CNPJ/Cód.)</div><div class="fv mn">${r.C7_FORNECE}</div></div></div>
       <div class="mrow">
-        <div class="mf full"><div class="fl">Produto · Descrição</div><div class="fv">${r.C7_PRODUTO} — ${r.C7_DESCRI}</div></div>
-      </div>
-      <div class="mrow">
-        <div class="mf full"><div class="fl">Fornecedor (CNPJ/Cód.)</div><div class="fv mn">${r.C7_FORNECE}</div></div>
-      </div>
-      <div class="mrow">
-        <div class="mf"><div class="fl">Qtd / Unidade</div><div class="fv mn">${fmt(r.C7_QUANT)} ${r.C7_UM||''}</td></div>
+        <div class="mf"><div class="fl">Qtd / Unidade</div><div class="fv mn">${fmt(r.C7_QUANT)} ${r.C7_UM||''}</div></div>
         <div class="mf"><div class="fl">Qtd. Entregue</div><div class="fv mn" style="color:var(--green)">${fmt(r.C7_QUJE)}</div></div>
         <div class="mf"><div class="fl">Preço Unitário</div><div class="fv mn">R$&nbsp;${fmt(r.C7_PRUNIT)}</div></div>
         <div class="mf"><div class="fl">Total do Item</div><div class="fv mn" style="font-weight:600">R$&nbsp;${fmt(r.C7_TOTAL)}</div></div>
       </div>
       <div class="mrow">
         <div class="mf"><div class="fl">Centro de Custo</div><div class="fv mn">${r.C7_CC||'-'}</div></div>
-        <div class="mf"><div class="fl">Classe Valor</div><div class="fv mn">${r.C7_CLASSEVALOR||'-'}</div></div>
-        <div class="mf"><div class="fl">SC de Origem</div><div class="fv mn">${r.C7_SOLICIT||'-'}</div></div>
-        <div class="mf"><div class="fl">Dt. Entrega</div><div class="fv mn">${fmtData(r.C7_DATPRF)}</div></div>
+        <div class="mf"><div class="fl">Dt. Entrega</div><div class="fv mn">${fmtDataUI(r.C7_DATPRF)}</div></div>
       </div>
-      ${r.C7_OBS?`<div class="mrow"><div class="mf full"><div class="fl">Observação</div><div class="fv" style="color:var(--amber)">${r.C7_OBS}</div></div></div>`:''}
-      ${itensHTML}
     </div>
     <div class="mfoot">
       <span style="font-size:12px;color:var(--muted);margin-right:auto">Total do PC: <strong style="color:var(--green)">R$&nbsp;${fmt(totalPC)}</strong></span>
@@ -1377,33 +1348,18 @@ function vPC(num, prod){
 function vSC(num){
   const r=S.sc.find(x=>x.C1_NUM===num);if(!r)return;
   document.getElementById('mc').innerHTML=`
-    <div class="mh"><div class="mh-t">Solicitação ${r.C1_NUM} &nbsp;${btipo(r.C1_TIPO)}&nbsp;${bsc(r.C1_STATUS)}</div>
-      <button class="mclose" onclick="closeM()">×</button></div>
+    <div class="mh"><div class="mh-t">Solicitação ${r.C1_NUM} &nbsp;${btipo(r.C1_TIPO)}&nbsp;${bsc(r.C1_STATUS)}</div><button class="mclose" onclick="closeM()">×</button></div>
     <div class="mb">
       <div class="mrow">
-        <div class="mf"><div class="fl">Filial</div><div class="fv mn" style="font-size:11px">${r.C1_FILIAL_DESC||r.C1_FILIAL}</div></div>
-        <div class="mf"><div class="fl">C1_NUM / C1_ITEM</div><div class="fv mn">${r.C1_NUM} / ${r.C1_ITEM}</div></div>
-        <div class="mf"><div class="fl">C1_EMISSAO</div><div class="fv mn">${fmtData(r.C1_EMISSAO)}</div></div>
-        <div class="mf"><div class="fl">C1_DATPRF</div><div class="fv mn">${fmtData(r.C1_DATPRF)}</div></div>
+        <div class="mf"><div class="fl">Filial</div><div class="fv mn">${r.C1_FILIAL}</div></div>
+        <div class="mf"><div class="fl">C1_EMISSAO</div><div class="fv mn">${fmtDataUI(r.C1_EMISSAO)}</div></div>
+        <div class="mf"><div class="fl">C1_DATPRF</div><div class="fv mn">${fmtDataUI(r.C1_DATPRF)}</div></div>
       </div>
-      <div class="mrow">
-        <div class="mf full"><div class="fl">C1_PRODUTO · C1_DESCRI</div><div class="fv">${r.C1_PRODUTO} — ${r.C1_DESCRI}</div></div>
-      </div>
+      <div class="mrow"><div class="mf full"><div class="fl">C1_PRODUTO · C1_DESCRI</div><div class="fv">${r.C1_PRODUTO} — ${r.C1_DESCRI}</div></div></div>
       <div class="mrow">
         <div class="mf"><div class="fl">C1_QUANT</div><div class="fv mn">${fmt(r.C1_QUANT)}</div></div>
         <div class="mf"><div class="fl">C1_QUJE (atendida)</div><div class="fv mn" style="color:var(--green)">${fmt(r.C1_QUJE)}</div></div>
         <div class="mf"><div class="fl">C1_CC</div><div class="fv mn">${r.C1_CC}</div></div>
-        <div class="mf"><div class="fl">C1_APROV</div><div class="fv mn">${r.C1_APROV==='L'?'✅ Liberada':'🔒 Bloqueada'}</div></div>
-      </div>
-      <div class="mrow">
-        <div class="mf"><div class="fl">Qtd / Unid</div><div class="fv mn">${fmt(r.C1_QUANT)} ${r.C1_UM||''}</div></div>
-        <div class="mf"><div class="fl">Grupo</div><div class="fv mn">${r.C1_GRUPO||'-'}</div></div>
-        <div class="mf"><div class="fl">Classe Valor</div><div class="fv mn">${r.C1_CLASSEVALOR||'-'}</div></div>
-        <div class="mf"><div class="fl">Valor Estimado</div><div class="fv mn">R$&nbsp;${fmt(r.C1_VALOREST)}</div></div>
-      </div>
-      <div class="mrow">
-        <div class="mf"><div class="fl">C1_SOLICIT</div><div class="fv">${r.C1_SOLICIT||'-'}</div></div>
-        <div class="mf"><div class="fl">C1_PEDIDO (PC gerado)</div><div class="fv">${r.C1_PEDIDO?`<span class="badge bt">${r.C1_PEDIDO}</span>`:'-'}</div></div>
       </div>
     </div>
     <div class="mfoot"><button class="btn btn-g" onclick="closeM()">Fechar</button></div>`;
@@ -1413,41 +1369,12 @@ function vSC(num){
 function closeM(e){if(!e||e.target===document.getElementById('modal'))document.getElementById('modal').style.display='none';}
 
 // ═══════════════════════════════════════════════
-// IMPORTAR (OTIMIZADO COM WORKER)
+// IMPORTAR (OTIMIZADO)
 // ═══════════════════════════════════════════════
 function rImp(){
-  const campos={
-    mata121:[
-      ['Filial','Filial','Ex: 020102-TGM - FILIAL BARRO ALTO'],['Numero','Número pedido','Identificador único SC7'],
-      ['Produto','Código produto','Código no SB1'],['Descricao','Descrição','Descrição do produto'],
-      ['Fornecedor','Fornecedor','CNPJ/CPF do fornecedor'],['Quantidade','Quantidade','Qtd pedida'],
-      ['Prc Unitario','Preço unitário','Valor por unidade'],['Unidade','Unidade','SV=Serviço → Uso Direto'],
-      ['Classe Valor','Classe Valor','Classe orçamentária'],['Centro Custo','Centro de Custo','CC do pedido'],
-      ['Data Emissao','Data Emissão','Data do pedido'],['Dt. Entrega','Previsão entrega','Data prometida'],
-      ['Numero da SC','SC de origem','SC1 que gerou este PC'],['Qtd.Entregue','Qtd entregue','Baixas por NF'],
-      ['Comprador','Comprador','Login do comprador responsável'],
-    ],
-    mata110:[
-      ['Filial','Filial','Ex: 020102-TGM - FILIAL BARRO ALTO'],['Numero da SC','Número SC','Identificador único SC1'],
-      ['Item da SC','Item','Sequência do item'],['Produto','Código produto','Código SB1'],
-      ['Descricao','Descrição','Descrição do produto'],['Quantidade','Quantidade','Qtd solicitada'],
-      ['Quant.em Ped','Qtd em Pedido','Qtd que já gerou PC → Status G'],['Centro Custo','Centro de Custo','CC da SC'],
-      ['Classe Valor','Classe Valor','Classe orçamentária'],['Unid Medida','Unidade','SV=Serviço → Uso Direto'],
-      ['DT Emissao','Data emissão','Data da solicitação'],['Valor Estim.','Valor Estimado','Preço estimado'],
-      ['Grupo','Grupo','Grupo do produto'],
-    ],
-    matr290:[
-      ['B1_COD','Código produto','Chave SB1'],['B1_DESC','Descrição','Nome do produto'],
-      ['B1_UM','Unidade medida','UN, KG, MT…'],['B1_TIPO','Tipo produto','PA, MP, PI…'],
-      ['B2_LOCAL','Armazém','Código SB2'],['B2_QATU','Saldo atual','Quantidade física'],
-      ['B2_EMPENHO','Empenhado','Reservas em aberto'],['B2_SALPEDI','Saldo pedido','Qtd em pedido de compra'],
-      ['B2_CM1','Custo médio','Custo médio unitário'],['B2_VATU1','Valor estoque','QATU × CM1'],
-      ['DISPONIVEL','Disponível','QATU − EMPENHO'],
-    ],
-  };
   const tab=S.itab;
   return`
-  <div class="sh"><div class="sh-title">Importar Planilhas</div><div class="sh-sub">Upload das exportações MATA110 · MATA121 · MATR290</div></div>
+  <div class="sh"><div class="sh-title">Importar Planilhas</div><div class="sh-sub">Suporte a arquivos grandes e separação por filial automática</div></div>
   <div class="imp-grid">
     ${[
       {id:'pc',title:'MATA121 — Pedido de Compra',sub:'Tabela SC7',icon:'📄',color:'rgba(79,124,255,.12)',tipo:'pc'},
@@ -1464,22 +1391,16 @@ function rImp(){
         ondragover="dov(event,'zone-${c.id}')" ondragleave="dlv('zone-${c.id}')"
         ondrop="ddr(event,'${c.tipo}')">
         <div class="imp-zi">📤</div>
-        <div class="imp-zt">Arraste ou clique para selecionar<br><span style="font-size:11px">.xlsx ou .csv (até 50MB)</span></div>
+        <div class="imp-zt">Arraste ou clique para selecionar<br><span style="font-size:11px">.xlsx ou .csv (Otimizado p/ +20MB)</span></div>
         <button class="btn btn-p" style="margin:0 auto" onclick="event.stopPropagation();document.getElementById('file-${c.id}').click()">Selecionar</button>
-        <input type="file" id="file-${c.id}" accept=".xlsx,.csv" onchange="procFile(this,'${c.tipo}')"/>
+        <input type="file" id="file-${c.id}" accept=".xlsx,.csv" onchange="procFileObj(this.files[0],'${c.tipo}')"/>
       </div>
     </div>`).join('')}
   </div>
-  <div class="imp-fields">
-    <div class="imp-ft">Campos reconhecidos automaticamente</div>
-    <div class="imp-tabs">
-      ${['mata121','mata110','matr290'].map(t=>`<button class="imp-tab${tab===t?' active':''}" onclick="S.itab='${t}';render()">${t.toUpperCase()}</button>`).join('')}
-    </div>
-    <div class="fcol-grid">
-      ${(campos[tab]||[]).map(([f,l,d])=>`<div class="fcol"><div class="fcol-f">${f}</div><div class="fcol-l">${l}</div><div class="fcol-d">${d}</div></div>`).join('')}
-    </div>
-    <div style="margin-top:12px;font-size:12px;color:var(--muted);line-height:1.6">
-      💡 O sistema reconhece automaticamente os nomes de campo do Protheus. Funciona com cabeçalho em código (C7_NUM) ou em português (Número do Pedido). O campo <span style="color:var(--accent);font-family:var(--mono)">C7_TIPO / C1_TIPO = R</span> indica Estoque; <span style="color:var(--accent2);font-family:var(--mono)">S</span> indica Uso Direto.
+  <div class="info-box" style="margin-top:20px; max-width:100%">
+    <div class="info-box-t">💡 Novo Motor de Importação</div>
+    <div class="info-box-d">
+      Seus arquivos agora são processados em um <strong>núcleo invisível</strong> (Worker). Isso significa que você pode importar planilhas gigantes sem que o navegador congele. Além disso, o nome da aba do MATR290 é limpo automaticamente (ex: "TGM - FILIAL BARRO ALTO-Produ" vira apenas "TGM - FILIAL BARRO ALTO"), servindo como um <strong>separador perfeito por filial</strong> no painel de estoque.
     </div>
   </div>`;
 }
@@ -1487,71 +1408,57 @@ function rImp(){
 function dov(e,id){e.preventDefault();document.getElementById(id)?.classList.add('drag');}
 function dlv(id){document.getElementById(id)?.classList.remove('drag');}
 function ddr(e,tipo){e.preventDefault();dlv('zone-'+(tipo==='pc'?'pc':tipo==='sc'?'sc':'est'));const f=e.dataTransfer.files[0];if(f)procFileObj(f,tipo);}
-function procFile(inp,tipo){const f=inp.files[0];if(f)procFileObj(f,tipo);}
 
+// UI DE PROGRESSO
+let chunkBuffer = [];
 function showProgress(msg,pct){
   let el=document.getElementById('prog-bar');
   if(!el){
     el=document.createElement('div');el.id='prog-bar';
-    el.style.cssText=[
-      'position:fixed;bottom:28px;right:28px;',
-      'background:rgba(13,17,30,.97);',
-      'border:1px solid rgba(79,124,255,.25);',
-      'border-radius:14px;padding:16px 20px;',
-      'z-index:9999;min-width:300px;',
-      'box-shadow:0 12px 40px rgba(0,0,0,.6),0 0 0 1px rgba(79,124,255,.1);',
-      'font-size:13px;font-family:Inter,sans-serif;',
-      'backdrop-filter:blur(12px);',
-    ].join('');
+    el.style.cssText='position:fixed;bottom:28px;right:28px;background:rgba(13,17,30,.97);border:1px solid rgba(79,124,255,.25);border-radius:14px;padding:16px 20px;z-index:9999;min-width:300px;box-shadow:0 12px 40px rgba(0,0,0,.6),0 0 0 1px rgba(79,124,255,.1);font-size:13px;font-family:Inter,sans-serif;backdrop-filter:blur(12px);';
     document.body.appendChild(el);
   }
-  el.innerHTML=
-    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'
-    +'<div style="width:8px;height:8px;border-radius:50%;background:#4f7cff;box-shadow:0 0 8px #4f7cff;animation:pulse 1s infinite;flex-shrink:0"></div>'
-    +'<span style="color:#e2e6f3;font-weight:500">'+msg+'</span>'
-    +'<span style="margin-left:auto;color:#4f7cff;font-family:JetBrains Mono,monospace;font-size:11px;font-weight:600">'+pct+'%</span>'
-    +'</div>'
-    +'<div style="background:rgba(31,38,64,.8);border-radius:99px;height:4px;overflow:hidden">'
-    +'<div style="background:linear-gradient(90deg,#4f7cff,#7c5cff);height:100%;width:'+pct+'%;transition:width .25s ease;border-radius:99px;box-shadow:0 0 8px rgba(79,124,255,.5)"></div>'
-    +'</div>';
+  el.innerHTML=`<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px"><div style="width:8px;height:8px;border-radius:50%;background:#4f7cff;box-shadow:0 0 8px #4f7cff;animation:pulse 1s infinite;flex-shrink:0"></div><span style="color:#e2e6f3;font-weight:500">${msg}</span><span style="margin-left:auto;color:#4f7cff;font-family:JetBrains Mono,monospace;font-size:11px;font-weight:600">${pct}%</span></div><div style="background:rgba(31,38,64,.8);border-radius:99px;height:4px;overflow:hidden"><div style="background:linear-gradient(90deg,#4f7cff,#7c5cff);height:100%;width:${pct}%;transition:width .25s ease;border-radius:99px;box-shadow:0 0 8px rgba(79,124,255,.5)"></div></div>`;
 }
 function hideProgress(){
   const el=document.getElementById('prog-bar');
-  if(el){
-    el.style.opacity='0';
-    el.style.transform='translateY(8px)';
-    el.style.transition='all .4s ease';
-    setTimeout(function(){el.remove();},450);
-  }
+  if(el){ el.style.opacity='0'; el.style.transform='translateY(8px)'; el.style.transition='all .4s ease'; setTimeout(()=>el.remove(),450); }
 }
 
 // ═══════════════════════════════════════════════
-// WORKER MANAGER (Lê o arquivo s/ travar a tela)
+// WORKER MANAGER (Não trava a tela e limpa memória)
 // ═══════════════════════════════════════════════
 function procFileObj(file, tipo){
-  showProgress('📂 Lendo '+file.name+'…', 10);
+  if(!file) return;
+  chunkBuffer = [];
+  showProgress('📂 Lendo '+file.name+'...', 10);
   const isCSV = file.name.toLowerCase().endsWith('.csv');
   const rd = new FileReader();
   
   rd.onload = function(e){
-    showProgress('⚙️ Processando (arquivos grandes levam tempo mas a tela não vai travar)…', 30);
+    showProgress('⚙️ Extraindo dados sem travar (isso leva alguns segundos p/ arquivos pesados)...', 25);
     
-    // Inicia o Worker em 2º plano
     const workerCode = document.getElementById('worker-script').textContent;
     const workerBlob = new Blob([workerCode], {type: 'application/javascript'});
     const worker = new Worker(URL.createObjectURL(workerBlob));
     
     worker.onmessage = function(msg){
-      if(msg.data.success){
-        const rows = msg.data.data;
-        if(!rows.length){ toast('Arquivo vazio ou formato não reconhecido','error'); hideProgress(); return; }
-        showProgress('📊 Mapeando '+rows.length.toLocaleString('pt-BR')+' registros…', 60);
-        processarEmChunks(rows, tipo);
-      } else {
-        hideProgress();
-        toast('Erro ao ler arquivo: ' + msg.data.error, 'error');
+      if(msg.data.status === 'info'){
+        showProgress(msg.data.msg, msg.data.pct);
+      } 
+      else if(msg.data.status === 'chunk'){
+        chunkBuffer.push(...msg.data.data);
+      } 
+      else if(msg.data.status === 'done'){
+        showProgress('💾 Salvando no banco de dados local...', 90);
+        setTimeout(() => finalizarImport(chunkBuffer, tipo), 50);
+        worker.terminate();
       }
-      worker.terminate();
+      else if(msg.data.status === 'error'){
+        hideProgress();
+        toast('Erro: ' + msg.data.error, 'error');
+        worker.terminate();
+      }
     };
     
     worker.onerror = function(err){
@@ -1560,261 +1467,75 @@ function procFileObj(file, tipo){
       worker.terminate();
     };
 
-    if(isCSV){
-      worker.postMessage({ type: 'csv', text: e.target.result });
-    } else {
-      // Transferable Objects -> Não duplica memória RAM!
-      worker.postMessage({ type: 'xlsx', buffer: e.target.result }, [e.target.result]);
-    }
+    if(isCSV) worker.postMessage({ type: 'csv', text: e.target.result, importType: tipo });
+    else worker.postMessage({ type: 'xlsx', buffer: e.target.result, importType: tipo }, [e.target.result]);
   };
   
-  rd.onerror = function(){ hideProgress(); toast('Erro ao ler o arquivo.','error'); };
+  rd.onerror = () => { hideProgress(); toast('Erro ao ler arquivo.','error'); };
   
   if(isCSV) rd.readAsText(file, 'windows-1252');
   else rd.readAsArrayBuffer(file);
 }
 
-function processarEmChunks(rows,tipo){
-  const total=rows.length;
-  const processados=new Array(total);
-  let chunk=2000;
-  let i=0;
-  function step(){
-    const t0=performance.now();
-    const fim=Math.min(i+chunk,total);
-    const fatia=rows.slice(i,fim);
-    let mapeados;
-    if(tipo==='pc') mapeados=mapPC(fatia,i);
-    else if(tipo==='sc') mapeados=mapSC(fatia,i);
-    else mapeados=mapEst(fatia,i);
-    for(let k=0;k<mapeados.length;k++) processados[i+k]=mapeados[k];
-    i=fim;
-    const elapsed=performance.now()-t0;
-    if(elapsed<30&&chunk<8000) chunk=Math.min(chunk+500,8000);
-    else if(elapsed>80&&chunk>500) chunk=Math.max(chunk-500,500);
-    const pct=60+Math.round((i/total)*30);
-    showProgress('⚙️ Mapeando dados… '+i.toLocaleString('pt-BR')+' / '+total.toLocaleString('pt-BR'),pct);
-    if(i<total){ requestAnimationFrame(step); return; }
-    showProgress('💾 Montando Tabela…',95);
-    setTimeout(function(){ finalizarImport(processados.filter(Boolean),tipo); },20);
-  }
-  requestAnimationFrame(step);
-}
-
-function finalizarImport(n,tipo){
-  // Uso otimizado de Map para liberar Array original logo e poupar RAM
+function finalizarImport(n, tipo){
   if(tipo==='pc'){
-    const chave=function(x){return x.C7_FILIAL+'|'+x.C7_NUM+'|'+x.C7_PRODUTO;};
+    const chave=x=>x.C7_FILIAL+'|'+x.C7_NUM+'|'+x.C7_PRODUTO;
     const idx=new Map();
     for(let i=0; i<S.pc.length; i++) idx.set(chave(S.pc[i]), S.pc[i]);
-    S.pc = []; // Libera RAM antiga
-    for(let i=0; i<n.length; i++) idx.set(chave(n[i]), n[i]);
-    S.pc=Array.from(idx.values());
-    idx.clear();
-    rebuildIdxPC();
-    updBadges();_salvarAgora();
-    hideProgress();
-    toast('✅ '+n.length.toLocaleString('pt-BR')+' linhas MATA121 importadas!','success');
-    setTimeout(function(){nav('pedidos');},700);
+    S.pc = []; for(let i=0; i<n.length; i++) idx.set(chave(n[i]), n[i]);
+    S.pc=Array.from(idx.values()); idx.clear();
+    rebuildIdxPC(); updBadges(); _salvarAgora(); hideProgress();
+    toast('✅ '+n.length.toLocaleString('pt-BR')+' pedidos de compra importados!','success');
+    nav('pedidos');
   } else if(tipo==='sc'){
-    const chave=function(x){return x.C1_FILIAL+'|'+x.C1_NUM+'|'+x.C1_ITEM+'|'+x.C1_PRODUTO;};
+    const chave=x=>x.C1_FILIAL+'|'+x.C1_NUM+'|'+x.C1_ITEM+'|'+x.C1_PRODUTO;
     const idx=new Map();
     for(let i=0; i<S.sc.length; i++) idx.set(chave(S.sc[i]), S.sc[i]);
-    S.sc = [];
-    for(let i=0; i<n.length; i++) idx.set(chave(n[i]), n[i]);
-    S.sc=Array.from(idx.values());
-    idx.clear();
-    rebuildIdxSC();
-    updBadges();_salvarAgora();
-    hideProgress();
-    toast('✅ '+n.length.toLocaleString('pt-BR')+' linhas MATA110 importadas!','success');
-    setTimeout(function(){nav('sc');},700);
+    S.sc = []; for(let i=0; i<n.length; i++) idx.set(chave(n[i]), n[i]);
+    S.sc=Array.from(idx.values()); idx.clear();
+    rebuildIdxSC(); updBadges(); _salvarAgora(); hideProgress();
+    toast('✅ '+n.length.toLocaleString('pt-BR')+' solicitações importadas!','success');
+    nav('sc');
   } else {
-    const chave=function(x){return x.B1_KEY||x.B1_FILIAL+'|'+x.B1_COD;};
+    const chave=x=>x.B1_FILIAL+'|'+x.B1_COD;
     const idx=new Map();
     for(let i=0; i<S.est.length; i++) idx.set(chave(S.est[i]), S.est[i]);
-    S.est = [];
-    for(let i=0; i<n.length; i++) idx.set(chave(n[i]), n[i]);
-    S.est=Array.from(idx.values());
-    idx.clear();
-    rebuildIdxEst();
-    S.vs.est._data=[];
-    S.vs.est.start=0;
-    updBadges();_salvarAgora();
-    hideProgress();
-    toast('✅ '+n.length.toLocaleString('pt-BR')+' produtos MATR290 importados!','success');
-    setTimeout(function(){nav('estoque');},700);
+    S.est = []; for(let i=0; i<n.length; i++) idx.set(chave(n[i]), n[i]);
+    S.est=Array.from(idx.values()); idx.clear();
+    rebuildIdxEst(); S.vs.est._data=[]; S.vs.est.start=0;
+    updBadges(); _salvarAgora(); hideProgress();
+    toast('✅ '+n.length.toLocaleString('pt-BR')+' produtos importados (Separados por Filial)!','success');
+    nav('estoque');
   }
-}
-
-const _mpCache = new WeakMap();
-function _norm(s){ return String(s||'').trim().toLowerCase().replace(/[^a-z0-9]/g,''); }
-function mp(obj,...cs){
-  let norm = _mpCache.get(obj);
-  if(!norm){
-    norm={};
-    for(const k of Object.keys(obj)){
-      const kl=k.trim().toLowerCase();
-      const kn=_norm(k);
-      if(!norm[kl]) norm[kl]={k,v:String(obj[k]||'').trim()};
-      if(!norm[kn]) norm[kn]={k,v:String(obj[k]||'').trim()};
-    }
-    _mpCache.set(obj,norm);
-  }
-  for(const c of cs){
-    const hit=norm[c.trim().toLowerCase()]||norm[_norm(c)];
-    if(hit&&hit.v!=='') return hit.v;
-  }
-  const nc=cs.map(c=>_norm(c));
-  for(const c of nc){
-    for(const key of Object.keys(norm)){
-      if(key.includes(c)||c.includes(key)){
-        const v=norm[key].v;
-        if(v!=='') return v;
-      }
-    }
-  }
-  return '';
-}
-function nTipo(v,um=''){const s=String(v).toUpperCase();const u=String(um).toUpperCase().trim();if(u==='SV')return'S';return(s==='S'||s.includes('DIRETO')||s.includes('SERVICO'))?'S':'R';}
-function nStPC(v,quje,qtd){
-  const s=String(v||'').toUpperCase().trim();
-  if(!s||s==='PENDENTE'||s==='ABERTO')return'';
-  if(s==='E'||s.includes('COTAC')||s.includes('COTAÇ')) return'E';
-  if(s==='P'||s.includes('PARCI'))                       return'P';
-  if(s==='A'||s.includes('APROV'))                       return'A';
-  if(s==='L'||s.includes('LIBER'))                       return'L';
-  if(s==='C'||s.includes('CANCEL'))                      return'C';
-  if(qtd>0){if(quje<=0)return'';if(quje>=qtd)return'L';return'P';}
-  return '';
-}
-function nStSC(v,quantPed,quant){
-  const s=String(v||'').toUpperCase().trim();
-  if(!s||s==='PENDENTE'||s==='ABERTO')return'P';
-  if(s==='E'||s.includes('COTAC')||s.includes('COTAÇ')) return'E';
-  if(s==='L'||s.includes('LIBER'))                       return'L';
-  if(s==='G'||s.includes('GERO')||s.includes('PEDIDO')) return'G';
-  if(s==='B'||s.includes('BLOQ'))                        return'B';
-  if(s==='R'||s.includes('REJEIT'))                      return'R';
-  if(s==='C'||s.includes('CANCEL'))                      return'C';
-  if(!v&&quantPed>0) return'G';
-  return'P';
-}
-function nNum(v){if(v===null||v===undefined||v==='')return 0;if(typeof v==='number')return+v.toFixed(4)*1||0;return+(String(v).replace(',','.').replace(/[^\d.-]/g,''))||0;}
-
-function mapPC(rows,offset){
-  return rows.map(function(r,i){
-    const um=mp(r,'Unidade','Unid Medida','C7_UM','um','unidade');
-    const quant=nNum(mp(r,'C7_QUANT','Quantidade','quantidade','qtd','qty'));
-    const quje=nNum(mp(r,'C7_QUJE','Qtd.Entregue','qtd.entregue','qtd entregue','quje','entregue'));
-    return{
-      C7_FILIAL:mp(r,'C7_FILIAL','Filial','filial')||'01',
-      C7_NUM:mp(r,'C7_NUM','Numero','numero','num')||String(offset+i+1).padStart(6,'0'),
-      C7_ITEM:mp(r,'C7_ITEM','item')||String(offset+i+1).padStart(3,'0'),
-      C7_PRODUTO:mp(r,'C7_PRODUTO','Produto','produto','codigo produto'),
-      C7_DESCRI:mp(r,'C7_DESCRI','Descricao','descricao','descri','desc'),
-      C7_FORNECE:mp(r,'C7_FORNECE','Fornecedor','fornecedor','fornece'),
-      C7_UM:um, C7_QUANT:quant, C7_PRUNIT:nNum(mp(r,'C7_PRUNIT','Prc Unitario','preco unitario')),
-      C7_TOTAL:nNum(mp(r,'C7_TOTAL','total','Total')),
-      C7_CC:mp(r,'C7_CC','Centro Custo','centro custo'),
-      C7_TIPO:nTipo(mp(r,'C7_TIPO','tipo'),um),
-      C7_EMISSAO:fmtData(mp(r,'C7_EMISSAO','Data Emissao','data emissao','emissao')),
-      C7_DATPRF:fmtData(mp(r,'C7_DATPRF','Dt. Entrega','dt. entrega','entrega')),
-      C7_QUJE:quje, C7_STATUS:nStPC(mp(r,'C7_STATUS','status'),quje,quant),
-      C7_COMPRADOR:mp(r,'Comprador','C7_COMPRADOR'),
-    };
-  });
-}
-
-function mapSC(rows,offset){
-  return rows.map(function(r,i){
-    const um=mp(r,'Unid Medida','C1_UM','unidade');
-    const quant=nNum(mp(r,'C1_QUANT','Quantidade','quantidade'));
-    const quantPed=nNum(mp(r,'Quant.em Ped','quant.em ped','C1_QUJE'));
-    return{
-      C1_FILIAL:mp(r,'C1_FILIAL','Filial','filial')||'01',
-      C1_NUM:mp(r,'C1_NUM','Numero da SC','numero da sc','numero')||String(offset+i+1).padStart(6,'0'),
-      C1_ITEM:mp(r,'C1_ITEM','Item da SC','item da sc')||String(offset+i+1).padStart(4,'0'),
-      C1_PRODUTO:mp(r,'C1_PRODUTO','Produto','produto'),
-      C1_DESCRI:mp(r,'C1_DESCRI','Descricao','descricao'),
-      C1_QUANT:quant, C1_QUJE:quantPed, C1_UM:um,
-      C1_CC:mp(r,'C1_CC','Centro Custo','centro custo'),
-      C1_EMISSAO:fmtData(mp(r,'C1_EMISSAO','DT Emissao','dt emissao','emissao')),
-      C1_DATPRF:fmtData(mp(r,'C1_DATPRF','necessidade','previsao')),
-      C1_SOLICIT:mp(r,'C1_SOLICIT','solicitante','solicit'),
-      C1_PEDIDO:mp(r,'C1_PEDIDO','pedido gerado'),
-      C1_STATUS:nStSC(mp(r,'C1_STATUS','status'),quantPed,quant),
-    };
-  });
-}
-
-function mapEst(rows,offset){
-  return rows.map(function(r,i){
-    const qatu=nNum(mp(r,'Saldo Atual','B2_QATU'));
-    const emp=nNum(mp(r,'Empenho','B2_EMPENHO'));
-    return{
-      B1_COD:mp(r,'Codigo','B1_COD'),
-      B1_DESC:mp(r,'Descricao','B1_DESC'),
-      B1_FILIAL:mp(r,'Filial','B1_FILIAL')||'01',
-      B1_UM:mp(r,'UM','B1_UM')||'UN',
-      B1_GRUPO:mp(r,'Grupo','B1_GRUPO'),
-      B2_QATU:qatu, B2_EMPENHO:emp,
-      DISPONIVEL:+(qatu-emp).toFixed(4)*1,
-      PONTO_PEDIDO:nNum(mp(r,'Ponto Pedido')),
-      ULT_SAIDA:fmtData(mp(r,'DT.Ult.Saida','ultima saida')),
-    };
-  });
+  chunkBuffer = [];
 }
 
 // ═══════════════════════════════════════════════
 // GUIA
 // ═══════════════════════════════════════════════
 function rAjuda(){
-  const steps=[
-    {n:1,c:'var(--accent)',t:'Exportar MATA121 — Pedido de Compra (SC7)',
-     d:'No Protheus vá em <strong style="color:var(--text)">Compras → Pedido de Compras (MATA121)</strong>. Na listagem do browse use <strong style="color:var(--text)">Outras Ações → Exportar → Excel</strong>. O relatório exporta: <span style="color:var(--accent);font-family:var(--mono)">Numero, Fornecedor (CNPJ), Produto, Descricao, Prc Unitario, Quantidade, Unidade, Classe Valor, Centro Custo, Data Emissao, Dt. Entrega, Numero da SC, Qtd.Entregue</span>. O campo <strong>Tipo (Estoque/Direto)</strong> é deduzido pela <strong>Unidade = SV</strong>.'},
-    {n:2,c:'var(--teal)',t:'Exportar MATA110 — Solicitação de Compra (SC1)',
-     d:'Vá em <strong style="color:var(--text)">Compras → Solicitação de Compras (MATA110)</strong>. Use <strong style="color:var(--text)">Outras Ações → Exportar → Excel</strong>. Colunas exportadas: <span style="color:var(--accent);font-family:var(--mono)">Numero da SC, Item da SC, Produto, Descricao, Quantidade, Unid Medida, Classe Valor, Valor Estim., DT Emissao, Centro Custo, Quant.em Ped, Grupo</span>. <strong>Quant.em Ped > 0</strong> indica que a SC gerou Pedido de Compra. Tipo Serviço é detectado por <strong>Unid Medida = SV</strong>.'},
-    {n:3,c:'var(--accent2)',t:'Exportar MATR290 — Análise de Estoque (SB1/SB2)',
-     d:'Vá em <strong style="color:var(--text)">Estoque → Relatórios → Análise de Estoques (MATR290)</strong>. Configure para mostrar B2_QATU (saldo atual), B2_EMPENHO (reservado), B2_SALPEDI (em pedido de compra) e B2_CM1 (custo médio). Este relatório cruza SB1 (cadastro de produtos) com SB2 (saldos por armazém).'},
-    {n:4,c:'var(--green)',t:'Importar no Monitor',
-     d:'Clique em <strong style="color:var(--text)">Importar Planilhas</strong>. Cada painel aceita o arquivo da rotina correspondente: MATA121, MATA110 ou MATR290. Pode arrastar o arquivo direto ou clicar em Selecionar. O sistema mapeia automaticamente os nomes de coluna — padrão Protheus (C7_NUM) ou título em português (Número do Pedido).'},
-    {n:5,c:'var(--amber)',t:'Monitorar e filtrar',
-     d:'<strong style="color:var(--text)">Dashboard</strong>: KPIs gerais com alertas. <strong style="color:var(--text)">Pedidos SC7</strong>: filtre por C7_TIPO (Estoque/Direto), status (Liberado, Parcial, Cancelado…), busque qualquer campo. <strong style="color:var(--text)">Solicitações SC1</strong>: veja SC sem pedido gerado (C1_PEDIDO vazio). <strong style="color:var(--text)">Estoque</strong>: produtos críticos (B2_QATU − B2_EMPENHO ≤ 0). Clique em qualquer linha para ver todos os campos.'},
-    {n:6,c:'var(--muted)',t:'Atualizar dados',
-     d:'Para atualizar com nova exportação do Protheus, basta importar novamente — os registros são acumulados. Para começar do zero clique em <strong style="color:var(--text)">Limpar</strong> no topo. Os dados ficam salvos automaticamente no navegador entre sessões.'},
-  ];
   return`
-  <div class="sh"><div class="sh-title">Guia de Uso — Passo a Passo</div><div class="sh-sub">MATA110 · MATA121 · MATR290 — do zero ao monitor</div></div>
+  <div class="sh"><div class="sh-title">Guia Rápido</div></div>
   <div class="step-grid">
-    ${steps.map(s=>`<div class="step">
-      <div class="step-n" style="background:${s.c}18;border:1.5px solid ${s.c};color:${s.c}">${s.n}</div>
-      <div><div class="step-t">${s.t}</div><div class="step-d">${s.d}</div></div>
-    </div>`).join('')}
-  </div>
-  <div class="info-box">
-    <div class="info-box-t">💡 C7_TIPO e C1_TIPO — diferença entre Estoque e Uso Direto</div>
-    <div class="info-box-d">
-      O monitor detecta o tipo automaticamente pela coluna <span style="color:var(--accent);font-family:var(--mono)">Unidade / Unid Medida</span>: quando o valor é <span style="color:var(--accent2)">SV</span>, o item é classificado como <span style="color:var(--accent2)">Serviço / Uso Direto</span> (sem movimentação de estoque). Qualquer outra unidade (UN, KG, MT, PC…) é classificado como <span style="color:var(--accent)">Estoque</span>. O status da SC é inferido pela coluna <span style="color:var(--accent);font-family:var(--mono)">Quant.em Ped</span>: valor &gt; 0 indica que a SC gerou Pedido de Compra.
-    </div>
+    <div class="step"><div class="step-n" style="background:#4f7cff18;border:1.5px solid #4f7cff;color:#4f7cff">1</div><div><div class="step-t">Tamanhos Suportados</div><div class="step-d">Você pode jogar os arquivos originais exportados pelo Protheus, até planilhas de 20MB a 50MB. O sistema vai extrair no fundo sem travar sua tela.</div></div></div>
+    <div class="step"><div class="step-n" style="background:#06c9d418;border:1.5px solid #06c9d4;color:#06c9d4">2</div><div><div class="step-t">Filiais Inteligentes</div><div class="step-d">Quando importar o arquivo MATR290, o sistema limpa o nome da aba automaticamente (Ex: "TGM - FILIAL BARRO ALTO-Produ" vira apenas "TGM - FILIAL BARRO ALTO"). Use o filtro de filial na tela de estoque para separar perfeitamente.</div></div></div>
   </div>`;
 }
 
 // ═══════════════════════════════════════════════
-// PERSISTÊNCIA & INIT
+// PERSISTÊNCIA (IndexedDB)
 // ═══════════════════════════════════════════════
-let _db = null;
-let _saveTimer = null;
+let _db = null, _saveTimer = null;
 function abrirDB(){
-  return new Promise(function(res,rej){
+  return new Promise((res,rej)=>{
     if(_db){res(_db);return;}
     const req=indexedDB.open('MonitorCompras',3);
-    req.onupgradeneeded=function(e){
+    req.onupgradeneeded=e=>{
       const db=e.target.result;
       if(!db.objectStoreNames.contains('dados')) db.createObjectStore('dados');
     };
-    req.onsuccess=function(e){_db=e.target.result;res(_db);};
-    req.onerror=function(){rej(req.error);};
+    req.onsuccess=e=>{_db=e.target.result;res(_db);};
+    req.onerror=()=>rej(req.error);
   });
 }
 async function _salvarAgora(){
@@ -1827,10 +1548,7 @@ async function _salvarAgora(){
     tx.oncomplete=()=>setSyncStatus('✓ Salvo às '+ts);
   }catch(_){}
 }
-function setSyncStatus(msg){
-  const el=document.getElementById('sync-ts');
-  if(el) el.textContent=msg;
-}
+function setSyncStatus(msg){const el=document.getElementById('sync-ts');if(el)el.textContent=msg;}
 async function carregar(){
   try{
     const db=await abrirDB();
@@ -1842,34 +1560,9 @@ async function carregar(){
     st.get('ts').onsuccess=(e)=>{if(e.target.result)setSyncStatus('✓ Salvo às '+e.target.result);};
   }catch(_){}
 }
-function limpar(){
-  if(!confirm('Limpar todos os dados?'))return;
-  S.pc=[];S.sc=[];S.est=[];
-  _salvarAgora();render();
-}
+function limpar(){if(confirm('Limpar todos os dados?')){S.pc=[];S.sc=[];S.est=[];_salvarAgora();render();}}
 function salvarManual(){ _salvarAgora(); toast('💾 Dados salvos!','success'); }
-function so(campo){if(S.sort.campo===campo)S.sort.dir*=-1;else{S.sort.campo=campo;S.sort.dir=1;}renderTabela(true);}
-function onScrollEst(el){
-  const d=S.vs.est._data;
-  const scrollTop=el.scrollTop;
-  const newStart=Math.max(0,Math.floor(scrollTop/36)-10);
-  if(Math.abs(newStart-(S.vs.est.start||0))>10){
-    S.vs.est.start=newStart;
-    renderVEst();
-  }
-}
-function toast(msg,tipo='info'){
-  const w=document.getElementById('toasts');
-  const t=document.createElement('div');t.className=`toast ${tipo}`;t.textContent=msg;
-  w.appendChild(t);setTimeout(()=>t.remove(),3500);
-}
-function toggleSb(){document.getElementById('sidebar').classList.toggle('open');}
-function bindDrop(){
-  document.querySelectorAll('.imp-zone').forEach(z=>{
-    z.addEventListener('dragover',e=>{e.preventDefault();z.classList.add('drag');});
-    z.addEventListener('dragleave',()=>z.classList.remove('drag'));
-  });
-}
+
 carregar().then(()=>{
   setTimeout(()=>{
     if(S.pc.length) rebuildIdxPC();
