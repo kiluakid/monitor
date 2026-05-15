@@ -668,13 +668,11 @@ self.onmessage = function(e) {
 
 <script>
 // ═══════════════════════════════════════════════
-// ESTADO
+// ESTADO E ÍNDICES
 // ═══════════════════════════════════════════════
 const S = {
   pg:'dashboard',
-  pc:[],
-  sc:[],
-  est:[],
+  pc:[], sc:[], est:[],
   idx:{pc:[],sc:[],est:[]},
   f:{tipo:'todos',status:'todos',busca:'',filial:'todos',comprador:'todos'},
   sort:{campo:'',dir:1},
@@ -683,11 +681,11 @@ const S = {
 };
 
 function buildIdx(arr,fields){
-  return arr.map(function(r){return fields.map(function(f){return String(r[f]||'');}).join('|').toLowerCase();});
+  return arr.map(function(r){return fields.map(function(f){return String(r[f]||'').toLowerCase();}).join('|');});
 }
-function rebuildIdxPC(){ S.idx.pc=buildIdx(S.pc,['C7_NUM','C7_PRODUTO','C7_DESCRI','C7_FORNECE','C7_CC','C7_CLASSEVALOR','C7_SOLICIT','C7_COMPRADOR','C7_FILIAL']); }
-function rebuildIdxSC(){ S.idx.sc=buildIdx(S.sc,['C1_NUM','C1_PRODUTO','C1_DESCRI','C1_CC','C1_SOLICIT','C1_PEDIDO','C1_GRUPO','C1_FILIAL']); }
-function rebuildIdxEst(){ S.idx.est=buildIdx(S.est,['B1_COD','B1_DESC','B1_DESC_CIEN','B1_GRUPO','B1_UM','B1_FILIAL','B1_CLASSE','B1_TIPO','B1_CL']); }
+function rebuildIdxPC(){ S.idx.pc=buildIdx(S.pc,['C7_NUM','C7_PRODUTO','C7_DESCRI','C7_FORNECE','C7_CC','C7_COMPRADOR','C7_FILIAL']); }
+function rebuildIdxSC(){ S.idx.sc=buildIdx(S.sc,['C1_NUM','C1_PRODUTO','C1_DESCRI','C1_CC','C1_SOLICIT','C1_PEDIDO','C1_FILIAL']); }
+function rebuildIdxEst(){ S.idx.est=buildIdx(S.est,['B1_COD','B1_DESC','B1_DESC_CIEN','B1_GRUPO','B1_FILIAL']); }
 
 function updBadges(){
   document.getElementById('bp').textContent=S.pc.length;
@@ -745,10 +743,8 @@ let _rtTimer=null;
 function renderTabela(immediate){
   clearTimeout(_rtTimer);
   if(immediate){ _doRenderTabela(); return; }
-  _rtTimer=setTimeout(_doRenderTabela, 200);
+  _rtTimer=setTimeout(_doRenderTabela, 150); // Debounce de filtro mais curto
 }
-const VROW_H=36;
-const VPAGE=60;
 
 function _doRenderTabela(){
   const tb=document.getElementById('tbody-main');
@@ -771,6 +767,12 @@ function _doRenderTabela(){
   }
 }
 
+// ═══════════════════════════════════════════════
+// ROLAGEM VIRTUAL - ULTRA RÁPIDA
+// ═══════════════════════════════════════════════
+const VROW_H=36;
+const VPAGE=60;
+
 function renderVEst(){
   const tb=document.getElementById('tbody-main');
   if(!tb)return;
@@ -784,14 +786,15 @@ function renderVEst(){
   const before=start*VROW_H;
   const after=Math.max(0,(d.length-start-VPAGE))*VROW_H;
   let html='';
-  if(before>0) html+='<tr style="height:'+before+'px"><td colspan="24"></td></tr>';
+  // Espaçadores virtuais superleves para o navegador
+  if(before>0) html+=`<tr style="border:none"><td colspan="24" style="height:${before}px;padding:0;border:none"></td></tr>`;
   html+=rowsEst(slice, start, d);
-  if(after>0) html+='<tr style="height:'+after+'px;background:transparent"><td colspan="24"></td></tr>';
+  if(after>0) html+=`<tr style="border:none"><td colspan="24" style="height:${after}px;padding:0;border:none"></td></tr>`;
   tb.innerHTML=html;
 }
 
 // ═══════════════════════════════════════════════
-// FUNÇÃO DE DATA
+// DATA RÁPIDA
 // ═══════════════════════════════════════════════
 function fmtData(v) {
   if (v === null || v === undefined || v === '' || v === '0' || v === 0) return '';
@@ -826,9 +829,8 @@ function fmtData(v) {
 
 function dataOrd(v){
   if(!v)return 0;
-  const limpo = fmtData(v);
-  const m=String(limpo).match(/(\d{2})\/(\d{2})\/(\d{4})/);
-  if(m)return parseInt(m[3]+m[2]+m[1]);
+  const m = String(v).match(/(\d{2})\/(\d{2})\/(\d{4})/);
+  if(m) return parseInt(m[3]+m[2]+m[1], 10);
   return 0;
 }
 
@@ -902,26 +904,48 @@ function rDash(){
 }
 
 // ═══════════════════════════════════════════════
+// ORDENAÇÃO RÁPIDA (Substitui localeCompare)
+// ═══════════════════════════════════════════════
+function sortArr(d, campo, dir, dc) {
+    d.sort((a,b) => {
+      const av=a[campo], bv=b[campo];
+      if(dc.includes(campo)) return (dataOrd(av)-dataOrd(bv))*dir;
+      
+      // Numbers
+      if(typeof av === 'number' && typeof bv === 'number') return (av-bv)*dir;
+      if(!isNaN(av) && !isNaN(bv)) return ((+av)-(+bv))*dir;
+      
+      // Strings (Operador < e > é ~100x mais rápido que localeCompare)
+      const sa = String(av||'').toLowerCase();
+      const sb = String(bv||'').toLowerCase();
+      if(sa < sb) return -1 * dir;
+      if(sa > sb) return 1 * dir;
+      return 0;
+    });
+}
+
+// ═══════════════════════════════════════════════
 // PEDIDOS SC7
 // ═══════════════════════════════════════════════
 function getFPC(){
   const b=S.f.busca.toLowerCase();
   const idx=S.idx.pc;
   const d=[];
-  S.pc.forEach(function(x,i){
-    if(S.f.filial!=='todos'&&x.C7_FILIAL!==S.f.filial) return;
-    if(S.f.tipo!=='todos'&&(S.f.tipo==='R'?x.C7_TIPO==='S':x.C7_TIPO!=='S')) return;
-    if(S.f.status!=='todos'&&x.C7_STATUS!==S.f.status) return;
-    if(S.f.comprador!=='todos'&&x.C7_COMPRADOR!==S.f.comprador) return;
-    if(b&&!(idx[i]||'').includes(b)) return;
+  for(let i=0; i<S.pc.length; i++) {
+    const x = S.pc[i];
+    if(S.f.filial!=='todos'&&x.C7_FILIAL!==S.f.filial) continue;
+    if(S.f.tipo!=='todos'&&(S.f.tipo==='R'?x.C7_TIPO==='S':x.C7_TIPO!=='S')) continue;
+    if(S.f.status!=='todos'&&x.C7_STATUS!==S.f.status) continue;
+    if(S.f.comprador!=='todos'&&x.C7_COMPRADOR!==S.f.comprador) continue;
+    if(b&&!(idx[i]||'').includes(b)) continue;
     d.push(x);
-  });
-  if(S.sort.campo){const dc=['C7_EMISSAO','C7_DATPRF'];d.sort((a,b)=>{const av=a[S.sort.campo],bv=b[S.sort.campo];if(dc.includes(S.sort.campo))return(dataOrd(av)-dataOrd(bv))*S.sort.dir;return(isNaN(av)||isNaN(bv)?String(av||'').localeCompare(String(bv||''),'pt'):(+av)-(+bv))*S.sort.dir;});}
+  }
+  if(S.sort.campo) sortArr(d, S.sort.campo, S.sort.dir, ['C7_EMISSAO','C7_DATPRF']);
   return d;
 }
 
 function rowsPC(d){
-  if(!d.length) return `<tr><td colspan="15"><div class="empty"><div class="empty-i">📋</div><div class="empty-t">Nenhum pedido encontrado</div><div class="empty-s">Ajuste os filtros ou importe MATA121</div></div></td></tr>`;
+  if(!d.length) return `<tr><td colspan="15"><div class="empty"><div class="empty-i">📋</div><div class="empty-t">Nenhum pedido encontrado</div></div></td></tr>`;
   return d.map(r=>`<tr onclick="vPC('${r.C7_NUM}','${r.C7_PRODUTO}')" style="cursor:pointer">
     <td class="mn">${r.C7_NUM}</td>
     <td>${btipo(r.C7_TIPO)}</td>
@@ -997,19 +1021,20 @@ function getFSC(){
   const b=S.f.busca.toLowerCase();
   const idx=S.idx.sc;
   const d=[];
-  S.sc.forEach(function(x,i){
-    if(S.f.filial!=='todos'&&x.C1_FILIAL!==S.f.filial) return;
-    if(S.f.tipo!=='todos'&&(S.f.tipo==='R'?x.C1_TIPO==='S':x.C1_TIPO!=='S')) return;
-    if(S.f.status!=='todos'&&x.C1_STATUS!==S.f.status) return;
-    if(b&&!(idx[i]||'').includes(b)) return;
+  for(let i=0; i<S.sc.length; i++) {
+    const x = S.sc[i];
+    if(S.f.filial!=='todos'&&x.C1_FILIAL!==S.f.filial) continue;
+    if(S.f.tipo!=='todos'&&(S.f.tipo==='R'?x.C1_TIPO==='S':x.C1_TIPO!=='S')) continue;
+    if(S.f.status!=='todos'&&x.C1_STATUS!==S.f.status) continue;
+    if(b&&!(idx[i]||'').includes(b)) continue;
     d.push(x);
-  });
-  if(S.sort.campo){const dc=['C1_EMISSAO','C1_DATPRF'];d.sort((a,b)=>{const av=a[S.sort.campo],bv=b[S.sort.campo];if(dc.includes(S.sort.campo))return(dataOrd(av)-dataOrd(bv))*S.sort.dir;return(isNaN(av)||isNaN(bv)?String(av||'').localeCompare(String(bv||''),'pt'):(+av)-(+bv))*S.sort.dir;});}
+  }
+  if(S.sort.campo) sortArr(d, S.sort.campo, S.sort.dir, ['C1_EMISSAO','C1_DATPRF']);
   return d;
 }
 
 function rowsSC(d){
-  if(!d.length) return `<tr><td colspan="12"><div class="empty"><div class="empty-i">📝</div><div class="empty-t">Nenhuma solicitação encontrada</div><div class="empty-s">Ajuste os filtros ou importe MATA110</div></div></td></tr>`;
+  if(!d.length) return `<tr><td colspan="12"><div class="empty"><div class="empty-i">📝</div><div class="empty-t">Nenhuma solicitação encontrada</div></div></td></tr>`;
   return d.map(r=>`<tr onclick="vSC('${r.C1_NUM}')" style="cursor:pointer">
     <td class="mn">${r.C1_NUM}</td>
     <td>${btipo(r.C1_TIPO)}</td>
@@ -1077,46 +1102,48 @@ function getFEst(){
   const b=S.f.busca.toLowerCase();
   const idx=S.idx.est;
   const d=[];
-  S.est.forEach(function(x,i){
-    if(S.f.filial&&S.f.filial!=='todos'&&x.B1_FILIAL!==S.f.filial) return;
-    if(S.f.status==='ponto'){
-      if(!((+x.PONTO_PEDIDO||0)>0)) return;
-    }
-    if(S.f.status==='critico'&&(+x.DISPONIVEL||0)>0) return;
+  for(let i=0; i<S.est.length; i++) {
+    const x = S.est[i];
+    if(S.f.filial&&S.f.filial!=='todos'&&x.B1_FILIAL!==S.f.filial) continue;
+    if(S.f.status==='ponto') { if(!((+x.PONTO_PEDIDO||0)>0)) continue; }
+    if(S.f.status==='critico'&&(+x.DISPONIVEL||0)>0) continue;
     if(S.f.status==='baixo'){
-      const disp=+x.DISPONIVEL||0,qatu=+x.B2_QATU||0;
-      if(!(disp>0&&disp<=qatu*.2)) return;
+      const disp=+x.DISPONIVEL||0, qatu=+x.B2_QATU||0;
+      if(!(disp>0&&disp<=qatu*.2)) continue;
     }
-    if(b&&!(idx[i]||'').includes(b)) return;
+    if(b&&!(idx[i]||'').includes(b)) continue;
     d.push(x);
-  });
+  }
+  
   if(S.sort.campo){
-    const c=S.sort.campo,dir=S.sort.dir;
-    d.sort(function(a,b){
-      const av=a[c],bv=b[c];
-      if(isNaN(av)||isNaN(bv)) return String(av||'').localeCompare(String(bv||''),'pt')*dir;
-      return((+av)-(+bv))*dir;
-    });
+    sortArr(d, S.sort.campo, S.sort.dir, ['ULT_SAIDA']);
   } else {
+    // Ordenação padrão ultra-rápida (Filial > Código)
     d.sort((a,b) => {
        const fA = String(a.B1_FILIAL||'').toLowerCase();
        const fB = String(b.B1_FILIAL||'').toLowerCase();
-       if(fA === fB) return String(a.B1_COD||'').localeCompare(String(b.B1_COD||''));
-       return fA.localeCompare(fB);
+       if(fA === fB) {
+           const cA = String(a.B1_COD||'').toLowerCase();
+           const cB = String(b.B1_COD||'').toLowerCase();
+           if(cA < cB) return -1;
+           if(cA > cB) return 1;
+           return 0;
+       }
+       return fA < fB ? -1 : 1;
     });
   }
   return d;
 }
 
 function rowsEst(slice, start, fullData){
-  if(!slice.length) return '<tr><td colspan="24"><div class="empty"><div class="empty-i">📦</div><div class="empty-t">Nenhum produto encontrado</div><div class="empty-s">Ajuste os filtros ou importe MATR290</div></div></td></tr>';
+  if(!slice.length) return '';
   return slice.map(function(r, i){
     const absIdx = start + i;
     const prevR = absIdx > 0 ? fullData[absIdx - 1] : null;
     let groupHdr = '';
     
-    // Header visual por filial
-    if(S.f.filial === 'todos' && (!prevR || prevR.B1_FILIAL !== r.B1_FILIAL)) {
+    // Header visual por filial sempre na primeira linha da Viewport ou quando muda
+    if(S.f.filial === 'todos' && (i === 0 || !prevR || prevR.B1_FILIAL !== r.B1_FILIAL)) {
         groupHdr = `<tr style="background:var(--surface3);border-top:2px solid var(--border2)"><td colspan="24" style="padding:10px 14px;font-weight:700;color:var(--accent);font-size:12px;text-transform:uppercase;letter-spacing:.05em;position:sticky;left:0">🏢 Filial: ${r.B1_FILIAL||'Sem Filial'}</td></tr>`;
     }
 
@@ -1550,7 +1577,7 @@ function hideProgress(){
 }
 
 // ═══════════════════════════════════════════════
-// WORKER MANAGER
+// WORKER E PROCESSAMENTO DE CHUNKS OTIMIZADO
 // ═══════════════════════════════════════════════
 function procFileObj(file, tipo){
   showProgress('📂 Lendo '+file.name+'…', 10);
@@ -1558,7 +1585,7 @@ function procFileObj(file, tipo){
   const rd = new FileReader();
   
   rd.onload = function(e){
-    showProgress('⚙️ Processando (arquivos grandes levam tempo mas a tela não vai travar)…', 30);
+    showProgress('⚙️ Extraindo dados...', 30);
     
     const workerCode = document.getElementById('worker-script').textContent;
     const workerBlob = new Blob([workerCode], {type: 'application/javascript'});
@@ -1599,28 +1626,39 @@ function procFileObj(file, tipo){
 function processarEmChunks(rows,tipo){
   const total=rows.length;
   const processados=new Array(total);
-  let chunk=2000;
+  let chunk=4000;
   let i=0;
+  
   function step(){
     const t0=performance.now();
     const fim=Math.min(i+chunk,total);
     const fatia=rows.slice(i,fim);
     let mapeados;
+    
     if(tipo==='pc') mapeados=mapPC(fatia,i);
     else if(tipo==='sc') mapeados=mapSC(fatia,i);
     else mapeados=mapEst(fatia,i);
+    
     for(let k=0;k<mapeados.length;k++) processados[i+k]=mapeados[k];
     i=fim;
+    
     const elapsed=performance.now()-t0;
-    if(elapsed<30&&chunk<8000) chunk=Math.min(chunk+500,8000);
-    else if(elapsed>80&&chunk>500) chunk=Math.max(chunk-500,500);
+    // Otimização de tempo de CPU: se foi muito rápido, aumenta o chunk; se demorou, reduz. Mantém o UI suave.
+    if(elapsed<16&&chunk<10000) chunk+=1000;
+    else if(elapsed>40&&chunk>500) chunk-=500;
+    
     const pct=60+Math.round((i/total)*30);
-    showProgress('⚙️ Mapeando dados… '+i.toLocaleString('pt-BR')+' / '+total.toLocaleString('pt-BR'),pct);
-    if(i<total){ requestAnimationFrame(step); return; }
+    showProgress('⚙️ Processando... '+i.toLocaleString('pt-BR')+' / '+total.toLocaleString('pt-BR'),pct);
+    
+    if(i<total){ 
+        setTimeout(step, 5); // Libera a UI
+        return; 
+    }
+    
     showProgress('💾 Montando Tabela…',95);
     setTimeout(function(){ finalizarImport(processados.filter(Boolean),tipo); },20);
   }
-  requestAnimationFrame(step);
+  setTimeout(step, 5);
 }
 
 function finalizarImport(n,tipo){
@@ -1668,35 +1706,28 @@ function finalizarImport(n,tipo){
   }
 }
 
-const _mpCache = new WeakMap();
-function _norm(s){ return String(s||'').trim().toLowerCase().replace(/[^a-z0-9]/g,''); }
+// ═══════════════════════════════════════════════
+// MAPPER ZERO-ALLOCATION (Resolve o travamento)
+// ═══════════════════════════════════════════════
 function mp(obj,...cs){
-  let norm = _mpCache.get(obj);
-  if(!norm){
-    norm={};
-    for(const k of Object.keys(obj)){
-      const kl=k.trim().toLowerCase();
-      const kn=_norm(k);
-      if(!norm[kl]) norm[kl]={k,v:String(obj[k]||'').trim()};
-      if(!norm[kn]) norm[kn]={k,v:String(obj[k]||'').trim()};
-    }
-    _mpCache.set(obj,norm);
+  // 1. Caminho ultra-rápido: Chave exata
+  for(let i=0; i<cs.length; i++){
+    let val = obj[cs[i]];
+    if(val !== undefined && val !== null && val !== '') return String(val).trim();
   }
-  for(const c of cs){
-    const hit=norm[c.trim().toLowerCase()]||norm[_norm(c)];
-    if(hit&&hit.v!=='') return hit.v;
-  }
-  const nc=cs.map(c=>_norm(c));
-  for(const c of nc){
-    for(const key of Object.keys(norm)){
-      if(key.includes(c)||c.includes(key)){
-        const v=norm[key].v;
-        if(v!=='') return v;
+  // 2. Caminho moderado: Chave exata em letras minúsculas (sem expressões regulares pesadas)
+  for(let k in obj) {
+    let kl = k.toLowerCase();
+    for(let i=0; i<cs.length; i++){
+      if(kl === cs[i].toLowerCase()) {
+         let val = obj[k];
+         if(val !== undefined && val !== null && val !== '') return String(val).trim();
       }
     }
   }
   return '';
 }
+
 function nTipo(v,um=''){const s=String(v).toUpperCase();const u=String(um).toUpperCase().trim();if(u==='SV')return'S';return(s==='S'||s.includes('DIRETO')||s.includes('SERVICO'))?'S':'R';}
 function nStPC(v,quje,qtd){
   const s=String(v||'').toUpperCase().trim();
