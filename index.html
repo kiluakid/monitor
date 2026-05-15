@@ -339,37 +339,6 @@ tbody tr:hover td{background:rgba(79,124,255,.04);}
 .imp-zi{font-size:28px;margin-bottom:10px;opacity:.35;}
 .imp-zt{font-size:12px;color:var(--muted);margin-bottom:13px;line-height:1.5;}
 input[type=file]{display:none;}
-.imp-fields{
-  background:var(--surface);
-  border:1px solid var(--border);
-  border-radius:var(--rxl);
-  padding:18px 20px;
-}
-.imp-ft{font-size:13px;font-weight:600;margin-bottom:13px;}
-.imp-tabs{display:flex;gap:5px;margin-bottom:15px;}
-.imp-tab{
-  padding:5px 14px;border-radius:99px;
-  font-size:11.5px;font-weight:500;cursor:pointer;
-  border:1px solid var(--border);
-  background:var(--surface2);color:var(--muted);
-  transition:all .15s;
-}
-.imp-tab.active{
-  background:rgba(79,124,255,.12);color:var(--accent);
-  border-color:rgba(79,124,255,.3);
-  box-shadow:0 0 12px rgba(79,124,255,.12);
-}
-.fcol-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(195px,1fr));gap:8px;}
-.fcol{
-  background:var(--surface2);
-  border:1px solid var(--border);
-  border-radius:var(--r);padding:9px 12px;
-  transition:border-color .15s;
-}
-.fcol:hover{border-color:var(--border2);}
-.fcol-f{font-size:11px;color:var(--accent);font-family:var(--mono);margin-bottom:2px;}
-.fcol-l{font-size:12px;font-weight:500;color:var(--text);}
-.fcol-d{font-size:10.5px;color:var(--muted);margin-top:2px;}
 
 /* ─── MODAL ──────────────────────────────────────────────────────────────── */
 .mo{
@@ -482,9 +451,19 @@ input[type=file]{display:none;}
 <script id="worker-script" type="javascript/worker">
 self.onmessage = function(e) {
   try {
-    const { type, buffer, text, importType } = e.data;
+    const { type, buffer, text, importType, fileName } = e.data;
     
-    // FUNÇÕES COMPARTILHADAS (Datas, Mapeamento, etc)
+    // Extrator de filial com base no nome do arquivo (ex: "matr290.xlsx - STP LOG - FILIAL BARRO ALTO 2.csv" -> "STP LOG - FILIAL BARRO ALTO")
+    function extractFilial(name) {
+       if (!name) return '01';
+       let n = name.replace(/\.csv$/i, '');
+       n = n.replace(/^(matr290|mata110|mata121)\.xlsx\s*-\s*/i, '');
+       n = n.replace(/(-Produ.*|-Pr.*| Produtos.*|\s\d+)$/i, '');
+       return n.trim();
+    }
+    const fileFilial = extractFilial(fileName);
+
+    // FUNÇÕES COMPARTILHADAS
     function fmtData(v) {
       if (!v) return '';
       const s = String(v).trim();
@@ -531,7 +510,7 @@ self.onmessage = function(e) {
     function nStPC(v,quje,qtd){const s=String(v||'').toUpperCase().trim(); if(!s||s==='PENDENTE'||s==='ABERTO')return''; if(s==='E'||s.includes('COTAC'))return'E'; if(s==='P'||s.includes('PARCI'))return'P'; if(s==='A'||s.includes('APROV'))return'A'; if(s==='L'||s.includes('LIBER'))return'L'; if(s==='C'||s.includes('CANCEL'))return'C'; if(qtd>0){if(quje<=0)return'';if(quje>=qtd)return'L';return'P';} return '';}
     function nStSC(v,quantPed,quant){const s=String(v||'').toUpperCase().trim(); if(!s||s==='PENDENTE'||s==='ABERTO')return'P'; if(s==='E'||s.includes('COTAC'))return'E'; if(s==='L'||s.includes('LIBER'))return'L'; if(s==='G'||s.includes('GERO')||s.includes('PEDIDO'))return'G'; if(s==='B'||s.includes('BLOQ'))return'B'; if(s==='R'||s.includes('REJEIT'))return'R'; if(s==='C'||s.includes('CANCEL'))return'C'; if(!v&&quantPed>0)return'G'; return'P';}
 
-    // MAPEAR LINHA DIRETO NO WORKER (Economiza MUITA memória)
+    // MAPEAR LINHA DIRETO NO WORKER
     function mapRow(r, tipo, idx, abaClean) {
       if (tipo === 'pc') {
         const um=mp(r,'Unidade','Unid Medida','C7_UM','um');
@@ -539,18 +518,23 @@ self.onmessage = function(e) {
         const quje=nNum(mp(r,'C7_QUJE','Qtd.Entregue','entregue'));
         return {
           C7_FILIAL: mp(r,'C7_FILIAL','Filial') || abaClean || '01',
+          C7_FILIAL_DESC: abaClean || mp(r,'C7_FILIAL','Filial'),
           C7_NUM: mp(r,'C7_NUM','Numero') || String(idx).padStart(6,'0'),
           C7_ITEM: mp(r,'C7_ITEM','item') || String(idx).padStart(3,'0'),
           C7_PRODUTO: mp(r,'C7_PRODUTO','Produto','codigo'),
           C7_DESCRI: mp(r,'C7_DESCRI','Descricao'),
           C7_FORNECE: mp(r,'C7_FORNECE','Fornecedor'),
           C7_UM: um, C7_QUANT: quant, C7_PRUNIT: nNum(mp(r,'C7_PRUNIT','Prc Unitario')),
-          C7_TOTAL: nNum(mp(r,'C7_TOTAL','total')), C7_CC: mp(r,'C7_CC','Centro Custo'),
+          C7_TOTAL: nNum(mp(r,'C7_TOTAL','total')), 
+          C7_CC: mp(r,'C7_CC','Centro Custo'),
+          C7_CLASSEVALOR: mp(r,'Classe Valor','classe valor','classvalor'),
           C7_TIPO: nTipo(mp(r,'C7_TIPO','tipo'),um),
           C7_EMISSAO: fmtData(mp(r,'C7_EMISSAO','Data Emissao')),
           C7_DATPRF: fmtData(mp(r,'C7_DATPRF','Dt. Entrega')),
           C7_QUJE: quje, C7_STATUS: nStPC(mp(r,'C7_STATUS','status'),quje,quant),
-          C7_COMPRADOR: mp(r,'Comprador','C7_COMPRADOR')
+          C7_SOLICIT: mp(r,'C7_SOLICIT','Numero da SC','numero da sc'),
+          C7_COMPRADOR: mp(r,'Comprador','C7_COMPRADOR'),
+          C7_OBS: mp(r,'C7_OBS','obs','observacao')
         };
       } else if (tipo === 'sc') {
         const um=mp(r,'Unid Medida','C1_UM');
@@ -558,34 +542,58 @@ self.onmessage = function(e) {
         const quantPed=nNum(mp(r,'Quant.em Ped','C1_QUJE'));
         return {
           C1_FILIAL: mp(r,'C1_FILIAL','Filial') || abaClean || '01',
+          C1_FILIAL_DESC: abaClean || mp(r,'C1_FILIAL','Filial'),
           C1_NUM: mp(r,'C1_NUM','Numero da SC') || String(idx).padStart(6,'0'),
           C1_ITEM: mp(r,'C1_ITEM','Item da SC') || String(idx).padStart(4,'0'),
           C1_PRODUTO: mp(r,'C1_PRODUTO','Produto'),
           C1_DESCRI: mp(r,'C1_DESCRI','Descricao'),
-          C1_QUANT: quant, C1_QUJE: quantPed, C1_UM: um, C1_CC: mp(r,'C1_CC','Centro Custo'),
+          C1_QUANT: quant, C1_QUJE: quantPed, C1_UM: um, 
+          C1_CC: mp(r,'C1_CC','Centro Custo'),
+          C1_CLASSEVALOR: mp(r,'Classe Valor','classe valor'),
+          C1_GRUPO: mp(r,'Grupo','grupo'),
+          C1_VALOREST: nNum(mp(r,'Valor Estim.','valor estim','valor estimado')),
+          C1_TIPO: nTipo(mp(r,'C1_TIPO','tipo'),um),
           C1_EMISSAO: fmtData(mp(r,'C1_EMISSAO','DT Emissao')),
           C1_DATPRF: fmtData(mp(r,'C1_DATPRF','necessidade')),
           C1_SOLICIT: mp(r,'C1_SOLICIT','solicitante'),
           C1_PEDIDO: mp(r,'C1_PEDIDO','pedido gerado'),
-          C1_STATUS: nStSC(mp(r,'C1_STATUS','status'),quantPed,quant)
+          C1_STATUS: nStSC(mp(r,'C1_STATUS','status'),quantPed,quant),
+          C1_APROV: mp(r,'C1_APROV','aprovacao')||'',
+          C1_OBS: mp(r,'C1_OBS','obs','observacao')
         };
-      } else { // ESTOQUE
+      } else { 
+        // ESTOQUE - MAPEAR TODOS OS CAMPOS COMPLETOS
         const qatu = nNum(mp(r,'Saldo Atual','B2_QATU'));
         const emp = nNum(mp(r,'Empenho','B2_EMPENHO'));
         return {
           B1_COD: mp(r,'Codigo','B1_COD','produto'),
           B1_DESC: mp(r,'Descricao','B1_DESC'),
-          B1_FILIAL: mp(r,'Filial','B1_FILIAL') || abaClean || '01',
-          B1_FILIAL_DESC: abaClean || mp(r,'Filial','B1_FILIAL'), // Guarda o nome certinho
+          B1_DESC_CIEN: mp(r,'Desc. Cientifica','desccientifica','desc cientifica'),
+          B1_FILIAL: abaClean || mp(r,'Filial','B1_FILIAL') || '01',
+          B1_FILIAL_DESC: abaClean || mp(r,'Filial','B1_FILIAL'),
           B1_UM: mp(r,'UM','B1_UM') || 'UN',
+          B1_TIPO: mp(r,'Tp','B1_TIPO','tipo') || 'MC',
           B1_GRUPO: mp(r,'Grupo','B1_GRUPO'),
-          B2_QATU: qatu, B2_EMPENHO: emp,
+          B1_CLASSE: mp(r,'Classe ABC','classeabc','classe'),
+          B1_CL: mp(r,'CL','cl'),
+          B1_OBS: mp(r,'obs','observacao'),
+          B2_QATU: qatu, 
+          B2_EMPENHO: emp,
+          B2_SCS: nNum(mp(r,'SCs Colocadas','scscolocadas','sc colocadas')),
+          B2_PCS: nNum(mp(r,'PCs Colocados','pcscolocados','pc colocados','B2_SALPEDI')),
+          B2_OPS: nNum(mp(r,'OPs Colocadas','opscolocadas','op colocadas')),
+          B2_PVS: nNum(mp(r,'PVs Colocados','pvscolocados','pv colocados')),
           DISPONIVEL: +(qatu-emp).toFixed(4)*1,
-          PONTO_PEDIDO: nNum(mp(r,'Ponto Pedido')),
-          ULT_SAIDA: fmtData(mp(r,'DT.Ult.Saida','ultima saida')),
-          B2_SCS: nNum(mp(r,'SCs Colocadas')),
-          B2_PCS: nNum(mp(r,'PCs Colocados')),
-          MED_CONSUMO: nNum(mp(r,'Med. Consumo'))
+          PONTO_PEDIDO: nNum(mp(r,'Ponto Pedido','pontopedido','ponto de pedido')),
+          LOTE_ECON: nNum(mp(r,'Lote Econom.','loteecon','lote economico')),
+          ENTREGA: nNum(mp(r,'Entrega','entrega','prazo entrega')),
+          EST_MESES: mp(r,'Estoque em Meses','estoqueemmeses','estoque meses'),
+          MED_CONSUMO: nNum(mp(r,'Med. Consumo','medconsumo','consumo medio')),
+          PREV_ENTREGA: nNum(mp(r,'Previsão entrega','previsaoentrega','previsao entrega')),
+          ULT_SAIDA: fmtData(r['DT.Ult.Saida'] !== undefined ? r['DT.Ult.Saida'] : mp(r,'DT.Ult.Saida','dtultsaida','ultima saida')),
+          CONTR_END: mp(r,'Contr.Endere','contrend','controle endereco'),
+          B2_CM1: nNum(mp(r,'B2_CM1','cm1','custo medio','custo med')),
+          B2_VATU1: nNum(mp(r,'B2_VATU1','vatu1','valor atual','valor estoque'))
         };
       }
     }
@@ -596,7 +604,6 @@ self.onmessage = function(e) {
     if (type === 'xlsx') {
       self.postMessage({ status: 'info', msg: 'Lendo arquivo Excel...', pct: 20 });
       importScripts('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
-      
       const wb = XLSX.read(buffer, { type: 'array', cellDates: true, dense: true });
       self.postMessage({ status: 'info', msg: 'Extraindo abas...', pct: 40 });
 
@@ -623,10 +630,8 @@ self.onmessage = function(e) {
           if (row && row.filter(c => c !== null && c !== undefined && c !== '').length > 2) { hdrIdx = i; break; }
         }
         
+        if (!arr[hdrIdx]) continue;
         const hdrs = arr[hdrIdx].map(h => String(h||'').replace(/_x000D_/g,'').trim());
-        
-        // LIMPAR NOME DA ABA PARA SER A FILIAL PERFEITA
-        // Remove: "-Produ", "-Pr", "Produtos", " 2", etc.
         let abaClean = aba.replace(/(-Produ.*|-Pr.*| Produtos.*|\s\d+)$/i, '').trim();
 
         for (let i = hdrIdx + 1; i < arr.length; i++) {
@@ -640,9 +645,7 @@ self.onmessage = function(e) {
           
           globalIndex++;
           const mapeado = mapRow(obj, importType, globalIndex, abaClean);
-          if(mapeado.B1_COD || mapeado.C7_PRODUTO || mapeado.C1_PRODUTO) {
-            chunk.push(mapeado);
-          }
+          if(mapeado.B1_COD || mapeado.C7_PRODUTO || mapeado.C1_PRODUTO) chunk.push(mapeado);
 
           if(chunk.length >= 3000) {
             self.postMessage({ status: 'chunk', data: chunk });
@@ -654,13 +657,19 @@ self.onmessage = function(e) {
       self.postMessage({ status: 'done' });
 
     } 
-    // LER CSV
+    // LER CSV (Corrigido para evitar erros de array undefined e extrair a filial)
     else if (type === 'csv') {
       const lines = text.split(/\r?\n/);
       if (lines.length > 0) {
-        const sep = lines[0].split(';').length > lines[0].split(',').length ? ';' : ',';
-        const hdrLine = lines[0].split(sep).filter(c => c.trim()).length <= 2 ? 1 : 0;
-        const hdrs = lines[hdrLine].split(sep).map(h => h.trim().replace(/["']/g, ''));
+        const sep = (lines[0].indexOf(';') !== -1) ? ';' : ',';
+        
+        let hdrLine = 0;
+        for(let i=0; i < Math.min(lines.length, 10); i++){
+          if(lines[i].split(sep).filter(c => c.trim()).length > 2) { hdrLine = i; break; }
+        }
+        
+        const hdrsStr = lines[hdrLine] || "";
+        const hdrs = hdrsStr.split(sep).map(h => h.trim().replace(/["']/g, ''));
         
         let chunk = [];
         for (let i = hdrLine + 1; i < lines.length; i++) {
@@ -670,10 +679,8 @@ self.onmessage = function(e) {
           hdrs.forEach((h, j) => { obj[h] = vals[j] || ''; });
           
           globalIndex++;
-          const mapeado = mapRow(obj, importType, globalIndex, 'CSV_DATA');
-          if(mapeado.B1_COD || mapeado.C7_PRODUTO || mapeado.C1_PRODUTO) {
-             chunk.push(mapeado);
-          }
+          const mapeado = mapRow(obj, importType, globalIndex, fileFilial);
+          if(mapeado.B1_COD || mapeado.C7_PRODUTO || mapeado.C1_PRODUTO) chunk.push(mapeado);
 
           if(chunk.length >= 3000) {
             self.postMessage({ status: 'chunk', data: chunk });
@@ -774,10 +781,7 @@ self.onmessage = function(e) {
 // ESTADO
 // ═══════════════════════════════════════════════
 const S = {
-  pg:'dashboard',
-  pc:[],
-  sc:[],
-  est:[],
+  pg:'dashboard', pc:[], sc:[], est:[],
   idx:{pc:[],sc:[],est:[]},
   f:{tipo:'todos',status:'todos',busca:'',filial:'todos',comprador:'todos'},
   sort:{campo:'',dir:1},
@@ -791,7 +795,6 @@ function buildIdx(arr,fields){
 function rebuildIdxPC(){ S.idx.pc=buildIdx(S.pc,['C7_NUM','C7_PRODUTO','C7_DESCRI','C7_FORNECE','C7_CC','C7_CLASSEVALOR','C7_SOLICIT','C7_COMPRADOR','C7_FILIAL']); }
 function rebuildIdxSC(){ S.idx.sc=buildIdx(S.sc,['C1_NUM','C1_PRODUTO','C1_DESCRI','C1_CC','C1_SOLICIT','C1_PEDIDO','C1_GRUPO','C1_FILIAL']); }
 function rebuildIdxEst(){ S.idx.est=buildIdx(S.est,['B1_COD','B1_DESC','B1_DESC_CIEN','B1_GRUPO','B1_UM','B1_FILIAL','B1_CLASSE','B1_TIPO','B1_CL']); }
-
 
 function updBadges(){
   document.getElementById('bp').textContent=S.pc.length;
@@ -1229,10 +1232,7 @@ function bindEstClick(){
 function rEst(){
   const d=getFEst();
   S.vs.est._data=d; S.vs.est.start=0;
-  
-  // Como as abas agora são limpas direto no worker, a filial será listada certinho!
   const filiais=[...new Set(S.est.map(x=>x.B1_FILIAL).filter(Boolean))].sort();
-  
   return`
   <div class="sh"><div class="sh-title">Análise de Estoque</div><div class="sh-sub">MATR290 · ${S.est.length} produtos · ${filiais.length} filiais</div></div>
   <div class="filters">
@@ -1272,7 +1272,7 @@ function rEst(){
 }
 
 // ═══════════════════════════════════════════════
-// MODAIS
+// MODAIS COM TODOS OS DADOS RESTAURADOS
 // ═══════════════════════════════════════════════
 function vEst(filial,cod){
   const r=S.est.find(x=>x.B1_FILIAL===filial&&x.B1_COD===cod);
@@ -1280,16 +1280,28 @@ function vEst(filial,cod){
   const disp=+r.DISPONIVEL||0,qatu=+r.B2_QATU||0, pct=qatu>0?disp/qatu:0;
   const [sit,sc]=disp<=0?['Crítico','br']:pct<.2?['Baixo','ba']:['Normal','bg'];
   document.getElementById('mc').innerHTML=`
-    <div class="mh"><div class="mh-t">${r.B1_COD} — ${r.B1_DESC||''} &nbsp;<span class="badge ${sc}">${sit}</span></div>
+    <div class="mh">
+      <div class="mh-t">
+        ${r.B1_COD} — ${r.B1_DESC||''} &nbsp;<span class="badge ${sc}">${sit}</span>
+        ${r.B1_CLASSE?`&nbsp;<span class="badge bz">Classe ${r.B1_CLASSE}</span>`:''}
+      </div>
       <button class="mclose" onclick="closeM()">×</button>
     </div>
     <div class="mb">
       <div class="mrow">
-        <div class="mf"><div class="fl">Filial</div><div class="fv mn">${r.B1_FILIAL}</div></div>
+        <div class="mf"><div class="fl">Filial</div><div class="fv mn">${r.B1_FILIAL_DESC||r.B1_FILIAL}</div></div>
         <div class="mf"><div class="fl">Código</div><div class="fv mn">${r.B1_COD}</div></div>
         <div class="mf"><div class="fl">UM</div><div class="fv mn">${r.B1_UM||''}</div></div>
+        <div class="mf"><div class="fl">Tipo</div><div class="fv mn">${r.B1_TIPO||''}</div></div>
       </div>
       <div class="mrow"><div class="mf full"><div class="fl">Descrição</div><div class="fv">${r.B1_DESC||''}</div></div></div>
+      ${r.B1_DESC_CIEN&&r.B1_DESC_CIEN!==r.B1_DESC?`<div class="mrow"><div class="mf full"><div class="fl">Desc. Científica</div><div class="fv" style="font-size:12px;color:var(--muted2)">${r.B1_DESC_CIEN}</div></div></div>`:''}
+      <div class="mrow">
+        <div class="mf"><div class="fl">Grupo</div><div class="fv mn">${r.B1_GRUPO||'-'}</div></div>
+        <div class="mf"><div class="fl">Classe ABC</div><div class="fv mn">${r.B1_CLASSE||'-'}</div></div>
+        <div class="mf"><div class="fl">CL</div><div class="fv mn">${r.B1_CL||'-'}</div></div>
+        <div class="mf"><div class="fl">Contr. Endereç.</div><div class="fv mn">${r.CONTR_END||'-'}</div></div>
+      </div>
       <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;margin-bottom:12px">
         <div class="fl" style="margin-bottom:10px">SALDOS E MOVIMENTOS</div>
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
@@ -1302,11 +1314,27 @@ function vEst(filial,cod){
       <div class="mrow">
         <div class="mf"><div class="fl">SCs Colocadas</div><div class="fv mn" style="color:var(--teal)">${fmt(+r.B2_SCS||0)}</div></div>
         <div class="mf"><div class="fl">PCs Colocados</div><div class="fv mn" style="color:var(--accent)">${fmt(+r.B2_PCS||0)}</div></div>
-        <div class="mf"><div class="fl">Últ. Saída</div><div class="fv mn">${fmtDataUI(r.ULT_SAIDA||'-')}</div></div>
-        <div class="mf"><div class="fl">Ponto Pedido</div><div class="fv mn">${fmt(+r.PONTO_PEDIDO||0)}</div></div>
+        <div class="mf"><div class="fl">OPs Colocadas</div><div class="fv mn">${fmt(+r.B2_OPS||0)}</div></div>
+        <div class="mf"><div class="fl">PVs Colocados</div><div class="fv mn">${fmt(+r.B2_PVS||0)}</div></div>
       </div>
+      <div class="mrow">
+        <div class="mf"><div class="fl">Ponto Pedido</div><div class="fv mn">${fmt(+r.PONTO_PEDIDO||0)}</div></div>
+        <div class="mf"><div class="fl">Lote Econômico</div><div class="fv mn">${fmt(+r.LOTE_ECON||0)}</div></div>
+        <div class="mf"><div class="fl">Prazo Entrega</div><div class="fv mn">${fmt(+r.ENTREGA||0)} dias</div></div>
+        <div class="mf"><div class="fl">Estoque em Meses</div><div class="fv mn">${r.EST_MESES||'-'}</div></div>
+      </div>
+      <div class="mrow">
+        <div class="mf"><div class="fl">Previsão de Entrega</div><div class="fv mn" style="color:var(--accent)">${fmt(+r.PREV_ENTREGA||0)}</div></div>
+        <div class="mf"><div class="fl">Últ. Saída</div><div class="fv mn">${fmtDataUI(r.ULT_SAIDA||'-')}</div></div>
+        <div class="mf"><div class="fl">Custo Médio</div><div class="fv mn">R$ ${fmt(+r.B2_CM1||0)}</div></div>
+        <div class="mf"><div class="fl">Valor em Estoque</div><div class="fv mn" style="font-weight:700">R$ ${fmt(+r.B2_VATU1||0)}</div></div>
+      </div>
+      ${r.B1_OBS?`<div class="mrow"><div class="mf full"><div class="fl">Observação</div><div class="fv" style="color:var(--amber)">${r.B1_OBS}</div></div></div>`:''}
     </div>
-    <div class="mfoot"><button class="btn btn-g" onclick="closeM()">Fechar</button></div>`;
+    <div class="mfoot">
+      <span style="font-size:12px;color:var(--muted);margin-right:auto">Disponível: <strong style="color:${disp<=0?'var(--red)':pct<.2?'var(--amber)':'var(--green)'}">${fmt(disp)} ${r.B1_UM||''}</strong> &nbsp;·&nbsp;Custo Médio: <strong>R$ ${fmt(+r.B2_CM1||0)}</strong></span>
+      <button class="btn btn-g" onclick="closeM()">Fechar</button>
+    </div>`;
   document.getElementById('modal').style.display='flex';
 }
 
@@ -1315,13 +1343,54 @@ function vPC(num, prod){
   if(!todos.length)return;
   const r=prod?todos.find(x=>x.C7_PRODUTO===prod)||todos[0]:todos[0];
   const totalPC=todos.reduce((a,b)=>a+(+b.C7_TOTAL||0),0);
+  
+  // Tabela completa de itens (Restaurada)
+  const itensHTML=todos.length>1?`
+    <div style="margin-top:14px">
+      <div class="fl" style="margin-bottom:7px">TODOS OS ITENS DESTE PEDIDO (${todos.length})</div>
+      <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
+        <table style="width:100%;border-collapse:collapse;font-size:11.5px">
+          <thead style="background:var(--surface2)">
+            <tr>
+              <th style="padding:7px 10px;text-align:left;color:var(--muted);font-size:10px;text-transform:uppercase">Produto</th>
+              <th style="padding:7px 10px;text-align:left;color:var(--muted);font-size:10px;text-transform:uppercase">Descrição</th>
+              <th style="padding:7px 10px;text-align:right;color:var(--muted);font-size:10px;text-transform:uppercase">Qtd/UN</th>
+              <th style="padding:7px 10px;text-align:right;color:var(--muted);font-size:10px;text-transform:uppercase">Pr.Unit</th>
+              <th style="padding:7px 10px;text-align:right;color:var(--muted);font-size:10px;text-transform:uppercase">Total</th>
+              <th style="padding:7px 10px;text-align:left;color:var(--muted);font-size:10px;text-transform:uppercase">Entrega</th>
+              <th style="padding:7px 10px;text-align:left;color:var(--muted);font-size:10px;text-transform:uppercase">SC</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${todos.map((it)=>`<tr style="border-top:1px solid var(--border);background:${it.C7_PRODUTO===r.C7_PRODUTO?'rgba(79,124,255,.07)':''}">
+              <td style="padding:7px 10px;font-family:var(--mono);font-size:11px">${it.C7_PRODUTO}</td>
+              <td style="padding:7px 10px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${it.C7_DESCRI}">${it.C7_DESCRI}</td>
+              <td style="padding:7px 10px;text-align:right;font-family:var(--mono)">${fmt(it.C7_QUANT)} ${it.C7_UM||''}</td>
+              <td style="padding:7px 10px;text-align:right;font-family:var(--mono)">R$&nbsp;${fmt(it.C7_PRUNIT)}</td>
+              <td style="padding:7px 10px;text-align:right;font-family:var(--mono);font-weight:600">R$&nbsp;${fmt(it.C7_TOTAL)}</td>
+              <td style="padding:7px 10px;font-family:var(--mono);font-size:11px">${fmtDataUI(it.C7_DATPRF)}</td>
+              <td style="padding:7px 10px;font-family:var(--mono);font-size:11px">${it.C7_SOLICIT||'-'}</td>
+            </tr>`).join('')}
+            <tr style="border-top:2px solid var(--border2);background:var(--surface2)">
+              <td colspan="4" style="padding:7px 10px;font-size:11px;color:var(--muted)">Total do Pedido</td>
+              <td style="padding:7px 10px;text-align:right;font-family:var(--mono);font-weight:700;color:var(--green)">R$&nbsp;${fmt(totalPC)}</td>
+              <td colspan="2"></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>`:'';
+
   document.getElementById('mc').innerHTML=`
-    <div class="mh"><div class="mh-t">Pedido ${r.C7_NUM} &nbsp;${btipo(r.C7_TIPO)}&nbsp;${bpc(r.C7_STATUS)}</div>
-      <button class="mclose" onclick="closeM()">×</button>
+    <div class="mh">
+      <div class="mh-t">Pedido ${r.C7_NUM} &nbsp;${btipo(r.C7_TIPO)}&nbsp;${bpc(r.C7_STATUS)}
+        ${todos.length>1?`<span style="font-size:11px;color:var(--muted);font-weight:400;margin-left:8px">${todos.length} itens</span>`:''}
+      </div><button class="mclose" onclick="closeM()">×</button>
     </div>
     <div class="mb">
       <div class="mrow">
-        <div class="mf"><div class="fl">Filial</div><div class="fv mn" style="font-size:11px">${r.C7_FILIAL}</div></div>
+        <div class="mf"><div class="fl">Filial</div><div class="fv mn" style="font-size:11px">${r.C7_FILIAL_DESC||r.C7_FILIAL}</div></div>
+        <div class="mf"><div class="fl">Número / Item</div><div class="fv mn">${r.C7_NUM}</div></div>
         <div class="mf"><div class="fl">Emissão</div><div class="fv mn">${fmtDataUI(r.C7_EMISSAO)}</div></div>
         <div class="mf"><div class="fl">Comprador</div><div class="fv" style="font-size:12px">${r.C7_COMPRADOR||'-'}</div></div>
       </div>
@@ -1335,8 +1404,12 @@ function vPC(num, prod){
       </div>
       <div class="mrow">
         <div class="mf"><div class="fl">Centro de Custo</div><div class="fv mn">${r.C7_CC||'-'}</div></div>
+        <div class="mf"><div class="fl">Classe Valor</div><div class="fv mn">${r.C7_CLASSEVALOR||'-'}</div></div>
+        <div class="mf"><div class="fl">SC de Origem</div><div class="fv mn">${r.C7_SOLICIT||'-'}</div></div>
         <div class="mf"><div class="fl">Dt. Entrega</div><div class="fv mn">${fmtDataUI(r.C7_DATPRF)}</div></div>
       </div>
+      ${r.C7_OBS?`<div class="mrow"><div class="mf full"><div class="fl">Observação</div><div class="fv" style="color:var(--amber)">${r.C7_OBS}</div></div></div>`:''}
+      ${itensHTML}
     </div>
     <div class="mfoot">
       <span style="font-size:12px;color:var(--muted);margin-right:auto">Total do PC: <strong style="color:var(--green)">R$&nbsp;${fmt(totalPC)}</strong></span>
@@ -1351,7 +1424,8 @@ function vSC(num){
     <div class="mh"><div class="mh-t">Solicitação ${r.C1_NUM} &nbsp;${btipo(r.C1_TIPO)}&nbsp;${bsc(r.C1_STATUS)}</div><button class="mclose" onclick="closeM()">×</button></div>
     <div class="mb">
       <div class="mrow">
-        <div class="mf"><div class="fl">Filial</div><div class="fv mn">${r.C1_FILIAL}</div></div>
+        <div class="mf"><div class="fl">Filial</div><div class="fv mn" style="font-size:11px">${r.C1_FILIAL_DESC||r.C1_FILIAL}</div></div>
+        <div class="mf"><div class="fl">C1_NUM / C1_ITEM</div><div class="fv mn">${r.C1_NUM} / ${r.C1_ITEM}</div></div>
         <div class="mf"><div class="fl">C1_EMISSAO</div><div class="fv mn">${fmtDataUI(r.C1_EMISSAO)}</div></div>
         <div class="mf"><div class="fl">C1_DATPRF</div><div class="fv mn">${fmtDataUI(r.C1_DATPRF)}</div></div>
       </div>
@@ -1360,6 +1434,17 @@ function vSC(num){
         <div class="mf"><div class="fl">C1_QUANT</div><div class="fv mn">${fmt(r.C1_QUANT)}</div></div>
         <div class="mf"><div class="fl">C1_QUJE (atendida)</div><div class="fv mn" style="color:var(--green)">${fmt(r.C1_QUJE)}</div></div>
         <div class="mf"><div class="fl">C1_CC</div><div class="fv mn">${r.C1_CC}</div></div>
+        <div class="mf"><div class="fl">C1_APROV</div><div class="fv mn">${r.C1_APROV==='L'?'✅ Liberada':'🔒 Bloqueada'}</div></div>
+      </div>
+      <div class="mrow">
+        <div class="mf"><div class="fl">Qtd / Unid</div><div class="fv mn">${fmt(r.C1_QUANT)} ${r.C1_UM||''}</div></div>
+        <div class="mf"><div class="fl">Grupo</div><div class="fv mn">${r.C1_GRUPO||'-'}</div></div>
+        <div class="mf"><div class="fl">Classe Valor</div><div class="fv mn">${r.C1_CLASSEVALOR||'-'}</div></div>
+        <div class="mf"><div class="fl">Valor Estimado</div><div class="fv mn">R$&nbsp;${fmt(r.C1_VALOREST)}</div></div>
+      </div>
+      <div class="mrow">
+        <div class="mf"><div class="fl">C1_SOLICIT</div><div class="fv">${r.C1_SOLICIT||'-'}</div></div>
+        <div class="mf"><div class="fl">C1_PEDIDO (PC gerado)</div><div class="fv">${r.C1_PEDIDO?`<span class="badge bt">${r.C1_PEDIDO}</span>`:'-'}</div></div>
       </div>
     </div>
     <div class="mfoot"><button class="btn btn-g" onclick="closeM()">Fechar</button></div>`;
@@ -1369,12 +1454,11 @@ function vSC(num){
 function closeM(e){if(!e||e.target===document.getElementById('modal'))document.getElementById('modal').style.display='none';}
 
 // ═══════════════════════════════════════════════
-// IMPORTAR (OTIMIZADO)
+// IMPORTAR
 // ═══════════════════════════════════════════════
 function rImp(){
-  const tab=S.itab;
   return`
-  <div class="sh"><div class="sh-title">Importar Planilhas</div><div class="sh-sub">Suporte a arquivos grandes e separação por filial automática</div></div>
+  <div class="sh"><div class="sh-title">Importar Planilhas</div><div class="sh-sub">Suporte a arquivos grandes (CSV/XLSX) · Separação automática por Filial</div></div>
   <div class="imp-grid">
     ${[
       {id:'pc',title:'MATA121 — Pedido de Compra',sub:'Tabela SC7',icon:'📄',color:'rgba(79,124,255,.12)',tipo:'pc'},
@@ -1400,7 +1484,7 @@ function rImp(){
   <div class="info-box" style="margin-top:20px; max-width:100%">
     <div class="info-box-t">💡 Novo Motor de Importação</div>
     <div class="info-box-d">
-      Seus arquivos agora são processados em um <strong>núcleo invisível</strong> (Worker). Isso significa que você pode importar planilhas gigantes sem que o navegador congele. Além disso, o nome da aba do MATR290 é limpo automaticamente (ex: "TGM - FILIAL BARRO ALTO-Produ" vira apenas "TGM - FILIAL BARRO ALTO"), servindo como um <strong>separador perfeito por filial</strong> no painel de estoque.
+      Seus arquivos agora são processados em um <strong>núcleo invisível</strong> (Worker). Você pode importar planilhas gigantes sem travar a tela. Além disso, o nome do arquivo MATR290 é limpo automaticamente (ex: "matr290.xlsx - STP LOG - FILIAL BARRO ALTO-Produ.csv" vira apenas "STP LOG - FILIAL BARRO ALTO"), servindo como um <strong>separador perfeito por filial</strong> no painel de estoque.
     </div>
   </div>`;
 }
@@ -1426,7 +1510,7 @@ function hideProgress(){
 }
 
 // ═══════════════════════════════════════════════
-// WORKER MANAGER (Não trava a tela e limpa memória)
+// WORKER MANAGER (Lê sem travar a tela e s/ bugs)
 // ═══════════════════════════════════════════════
 function procFileObj(file, tipo){
   if(!file) return;
@@ -1436,8 +1520,7 @@ function procFileObj(file, tipo){
   const rd = new FileReader();
   
   rd.onload = function(e){
-    showProgress('⚙️ Extraindo dados sem travar (isso leva alguns segundos p/ arquivos pesados)...', 25);
-    
+    showProgress('⚙️ Extraindo dados sem travar...', 25);
     const workerCode = document.getElementById('worker-script').textContent;
     const workerBlob = new Blob([workerCode], {type: 'application/javascript'});
     const worker = new Worker(URL.createObjectURL(workerBlob));
@@ -1445,16 +1528,13 @@ function procFileObj(file, tipo){
     worker.onmessage = function(msg){
       if(msg.data.status === 'info'){
         showProgress(msg.data.msg, msg.data.pct);
-      } 
-      else if(msg.data.status === 'chunk'){
+      } else if(msg.data.status === 'chunk'){
         chunkBuffer.push(...msg.data.data);
-      } 
-      else if(msg.data.status === 'done'){
+      } else if(msg.data.status === 'done'){
         showProgress('💾 Salvando no banco de dados local...', 90);
         setTimeout(() => finalizarImport(chunkBuffer, tipo), 50);
         worker.terminate();
-      }
-      else if(msg.data.status === 'error'){
+      } else if(msg.data.status === 'error'){
         hideProgress();
         toast('Erro: ' + msg.data.error, 'error');
         worker.terminate();
@@ -1462,13 +1542,11 @@ function procFileObj(file, tipo){
     };
     
     worker.onerror = function(err){
-      hideProgress();
-      toast('Erro no processador: ' + err.message, 'error');
-      worker.terminate();
+      hideProgress(); toast('Erro no processador: ' + err.message, 'error'); worker.terminate();
     };
 
-    if(isCSV) worker.postMessage({ type: 'csv', text: e.target.result, importType: tipo });
-    else worker.postMessage({ type: 'xlsx', buffer: e.target.result, importType: tipo }, [e.target.result]);
+    if(isCSV) worker.postMessage({ type: 'csv', text: e.target.result, importType: tipo, fileName: file.name });
+    else worker.postMessage({ type: 'xlsx', buffer: e.target.result, importType: tipo, fileName: file.name }, [e.target.result]);
   };
   
   rd.onerror = () => { hideProgress(); toast('Erro ao ler arquivo.','error'); };
@@ -1508,18 +1586,6 @@ function finalizarImport(n, tipo){
     nav('estoque');
   }
   chunkBuffer = [];
-}
-
-// ═══════════════════════════════════════════════
-// GUIA
-// ═══════════════════════════════════════════════
-function rAjuda(){
-  return`
-  <div class="sh"><div class="sh-title">Guia Rápido</div></div>
-  <div class="step-grid">
-    <div class="step"><div class="step-n" style="background:#4f7cff18;border:1.5px solid #4f7cff;color:#4f7cff">1</div><div><div class="step-t">Tamanhos Suportados</div><div class="step-d">Você pode jogar os arquivos originais exportados pelo Protheus, até planilhas de 20MB a 50MB. O sistema vai extrair no fundo sem travar sua tela.</div></div></div>
-    <div class="step"><div class="step-n" style="background:#06c9d418;border:1.5px solid #06c9d4;color:#06c9d4">2</div><div><div class="step-t">Filiais Inteligentes</div><div class="step-d">Quando importar o arquivo MATR290, o sistema limpa o nome da aba automaticamente (Ex: "TGM - FILIAL BARRO ALTO-Produ" vira apenas "TGM - FILIAL BARRO ALTO"). Use o filtro de filial na tela de estoque para separar perfeitamente.</div></div></div>
-  </div>`;
 }
 
 // ═══════════════════════════════════════════════
