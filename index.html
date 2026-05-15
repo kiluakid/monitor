@@ -478,6 +478,116 @@ input[type=file]{display:none;}
 </style>
 </head>
 <body>
+
+<script id="worker-script" type="javascript/worker">
+self.onmessage = function(e) {
+  try {
+    const type = e.data.type;
+    let resultado = [];
+    
+    // Tratamento de Datas Centralizado
+    function processarData(v) {
+      if (!v) return '';
+      const s = String(v).trim();
+      if (s.includes('GMT') || s.includes('UTC') || s.includes('Hora padrão')) {
+        const d = new Date(s);
+        if (!isNaN(d.getTime())) return String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0') + '/' + d.getFullYear();
+      }
+      let iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (iso) return String(parseInt(iso[3])).padStart(2, '0') + '/' + String(parseInt(iso[2])).padStart(2, '0') + '/' + iso[1];
+      let barra = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+      if (barra) {
+        let yy = parseInt(barra[3]);
+        if (yy < 100) yy += 2000;
+        return String(parseInt(barra[1])).padStart(2, '0') + '/' + String(parseInt(barra[2])).padStart(2, '0') + '/' + yy;
+      }
+      if (/^\d{8}$/.test(s)) return s.slice(6, 8) + '/' + s.slice(4, 6) + '/' + s.slice(0, 4);
+      const n = parseFloat(s.replace(',', '.'));
+      if (!isNaN(n) && n > 10000 && n < 80000 && !s.includes('/')) {
+        const epoch = new Date(1899, 11, 30);
+        epoch.setDate(epoch.getDate() + Math.floor(n > 60 ? n - 1 : n));
+        return String(epoch.getDate()).padStart(2, '0') + '/' + String(epoch.getMonth() + 1).padStart(2, '0') + '/' + epoch.getFullYear();
+      }
+      return s;
+    }
+
+    if (type === 'csv') {
+      const text = e.data.text;
+      const lines = text.split(/\r?\n/);
+      if (lines.length > 0) {
+        const sep = lines[0].split(';').length > lines[0].split(',').length ? ';' : ',';
+        const hdrLine = lines[0].split(sep).filter(c => c.trim()).length <= 2 ? 1 : 0;
+        const hdrs = lines[hdrLine].split(sep).map(h => h.trim().replace(/["']/g, ''));
+        for (let i = hdrLine + 1; i < lines.length; i++) {
+          if (!lines[i].trim()) continue;
+          const vals = lines[i].split(sep).map(v => v.trim().replace(/["']/g, ''));
+          const o = {};
+          hdrs.forEach((h, j) => {
+            // Aplicar tratamento de data direto no worker se for campo de data
+            let val = vals[j] || '';
+            if (h.toLowerCase().includes('data') || h.toLowerCase().includes('emissao') || h.toLowerCase().includes('entrega')) {
+              val = processarData(val);
+            }
+            o[h] = val;
+          });
+          resultado.push(o);
+        }
+      }
+    } else {
+      importScripts('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
+      const buffer = e.data.buffer;
+      const wb = XLSX.read(buffer, { type: 'array', cellDates: true, dense: true });
+      
+      function normHdr(h) { return String(h||'').replace(/_x000D_/g,'').replace(/\r\n|\r|\n/g,' ').replace(/\s+/g,' ').trim(); }
+      function abaTemDados(hdrs) {
+        const flat = hdrs.map(h => normHdr(h).toLowerCase());
+        return flat.some(h => h === 'codigo' || h === 'filial' || h === 'key');
+      }
+
+      const nomes = wb.SheetNames;
+      const abaGeral = nomes.find(n => n.toLowerCase().includes('geral'));
+      const ABAS_IGNORAR = ['parametros','estoque zerado e prev entrega','dados rápido sc e pc','tratamento controle de endereç','dados rápidos qnt e end'];
+      let abas = abaGeral ? [abaGeral] : nomes.filter(n => !ABAS_IGNORAR.some(ig => n.toLowerCase().includes(ig.toLowerCase())));
+
+      for (const nome of abas) {
+        const ws = wb.Sheets[nome];
+        if (!ws) continue;
+        const arr = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, raw: true });
+        if (!arr || arr.length < 2) continue;
+        
+        let hdrIdx = 0;
+        for (let i = 0; i < Math.min(arr.length, 10); i++) {
+          const row = arr[i];
+          if (row && row.filter(c => c !== null && c !== undefined && c !== '').length > 2) { hdrIdx = i; break; }
+        }
+        
+        const hdrs = arr[hdrIdx].map(normHdr);
+        if (!abaTemDados(hdrs)) continue;
+        
+        for (let i = hdrIdx + 1; i < arr.length; i++) {
+          const row = arr[i];
+          if (!row || row.every(c => c === null || c === undefined || c === '')) continue;
+          const obj = { __aba__: nome };
+          for (let j = 0; j < hdrs.length; j++) {
+            if (hdrs[j]) {
+              let val = row[j] !== null && row[j] !== undefined ? row[j] : '';
+              if (val instanceof Date || hdrs[j].toLowerCase().includes('data') || hdrs[j].toLowerCase().includes('emissao') || hdrs[j].toLowerCase().includes('entrega')) {
+                val = processarData(val);
+              }
+              obj[hdrs[j]] = val;
+            }
+          }
+          resultado.push(obj);
+        }
+      }
+    }
+    self.postMessage({ success: true, data: resultado });
+  } catch (err) {
+    self.postMessage({ success: false, error: err.message });
+  }
+};
+</script>
+
 <div class="app">
 
 <aside class="sidebar" id="sidebar">
@@ -691,62 +801,43 @@ function renderVEst(){
 }
 
 // ═══════════════════════════════════════════════
-// FUNÇÃO DE DATA (ATUALIZADA)
+// FUNÇÃO DE DATA PARA EXIBIÇÃO (Limpa o Caché)
 // ═══════════════════════════════════════════════
 function fmtData(v) {
   if (v === null || v === undefined || v === '' || v === '0' || v === 0) return '';
-  
   let dObj = null;
-
-  // Se já for um objeto Date
   if (v instanceof Date) {
     dObj = v;
   } else {
     const s = String(v).trim();
     if (!s || s === 'null' || s === 'undefined') return '';
-
-    // CORREÇÃO PARA O FORMATO LONGO (Tue Dec 15 2020...)
-    // Se o texto tem letras (Tue, Dec, GMT, Brasília) e números, tentamos converter
     if (/[a-zA-Z]/.test(s) || s.includes('-') || s.includes('T')) {
         const parsed = new Date(s);
         if (!isNaN(parsed.getTime())) dObj = parsed;
     }
-    
-    // Se não pegou por data longa, tentamos os formatos manuais
     if (!dObj) {
-        // Tenta DD/MM/YYYY
         let barra = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
         if (barra) {
             let dd = parseInt(barra[1]), mm = parseInt(barra[2]), yy = parseInt(barra[3]);
             if (yy < 100) yy += 2000;
             return String(dd).padStart(2,'0') + '/' + String(mm).padStart(2,'0') + '/' + yy;
         }
-
-        // Tenta YYYYMMDD (Protheus puro)
         if (/^\d{8}$/.test(s)) {
             const y = s.slice(0,4), m = s.slice(4,6), d = s.slice(6,8);
             return d + '/' + m + '/' + y;
         }
-
-        // Tenta Número Serial do Excel
         const n = parseFloat(s.replace(',','.'));
         if (!isNaN(n) && n > 10000 && n < 80000 && !s.includes('/')) {
-            const adj = n > 60 ? n - 1 : n;
             const epoch = new Date(1899, 11, 30);
-            epoch.setDate(epoch.getDate() + Math.floor(adj));
+            epoch.setDate(epoch.getDate() + Math.floor(n > 60 ? n - 1 : n));
             dObj = epoch;
         }
     }
   }
-
-  // Se conseguimos criar um objeto de data válido, retornamos DD/MM/YYYY
   if (dObj && !isNaN(dObj.getTime())) {
-    return String(dObj.getDate()).padStart(2, '0') + '/' 
-         + String(dObj.getMonth() + 1).padStart(2, '0') + '/' 
-         + String(dObj.getFullYear());
+    return String(dObj.getDate()).padStart(2, '0') + '/' + String(dObj.getMonth() + 1).padStart(2, '0') + '/' + String(dObj.getFullYear());
   }
-
-  return String(v); // Caso tudo falhe, retorna o que veio
+  return String(v);
 }
 
 function dataOrd(v){
@@ -1322,7 +1413,7 @@ function vSC(num){
 function closeM(e){if(!e||e.target===document.getElementById('modal'))document.getElementById('modal').style.display='none';}
 
 // ═══════════════════════════════════════════════
-// IMPORTAR
+// IMPORTAR (OTIMIZADO COM WORKER)
 // ═══════════════════════════════════════════════
 function rImp(){
   const campos={
@@ -1373,7 +1464,7 @@ function rImp(){
         ondragover="dov(event,'zone-${c.id}')" ondragleave="dlv('zone-${c.id}')"
         ondrop="ddr(event,'${c.tipo}')">
         <div class="imp-zi">📤</div>
-        <div class="imp-zt">Arraste ou clique para selecionar<br><span style="font-size:11px">.xlsx ou .csv</span></div>
+        <div class="imp-zt">Arraste ou clique para selecionar<br><span style="font-size:11px">.xlsx ou .csv (até 50MB)</span></div>
         <button class="btn btn-p" style="margin:0 auto" onclick="event.stopPropagation();document.getElementById('file-${c.id}').click()">Selecionar</button>
         <input type="file" id="file-${c.id}" accept=".xlsx,.csv" onchange="procFile(this,'${c.tipo}')"/>
       </div>
@@ -1434,96 +1525,52 @@ function hideProgress(){
   }
 }
 
-function normHdr(h){
-  return String(h||'').replace(/_x000D_/g,'').replace(/\r\n|\r|\n/g,' ').replace(/\s+/g,' ').trim();
-}
-
-const ABAS_IGNORAR=['parametros','estoque zerado e prev entrega','dados rápido sc e pc',
-  'tratamento controle de endereç','dados rápidos qnt e end'];
-
-function abaTemDados(hdrs){
-  const flat=hdrs.map(function(h){return normHdr(h).toLowerCase();});
-  return flat.some(function(h){return h==='codigo'||h==='filial'||h==='key';});
-}
-
-function lerAbasProtheus(wb){
-  const nomes=wb.SheetNames;
-  const abaGeral=nomes.find(function(n){return n.toLowerCase().includes('geral');});
-  let abas;
-  if(abaGeral){
-    abas=[abaGeral];
-  } else {
-    abas=nomes.filter(function(n){
-      return !ABAS_IGNORAR.some(function(ig){return n.toLowerCase().includes(ig.toLowerCase());});
-    });
-  }
-  const resultado=[];
-  abas.forEach(function(nome){
-    const ws=wb.Sheets[nome];
-    if(!ws) return;
-    const amostra=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:false,
-      range:{s:{r:0,c:0},e:{r:2,c:30}}});
-    if(!amostra||!amostra.length) return;
-    let hdrIdx=0;
-    for(let i=0;i<amostra.length;i++){
-      const filled=amostra[i].filter(function(c){return c!==''&&c!==null&&c!==undefined;}).length;
-      if(filled>2){hdrIdx=i;break;}
-    }
-    if(!abaTemDados(amostra[hdrIdx]||[])) return;
-    const arr=XLSX.utils.sheet_to_json(ws,{header:1,defval:null,raw:true,range:hdrIdx});
-    if(!arr||arr.length<2) return;
-    const hdrs=arr[0].map(normHdr);
-    for(let i=1;i<arr.length;i++){
-      const row=arr[i];
-      if(!row||row.every(function(c){return c===null||c===undefined||c===''})) continue;
-      const obj={__aba__:nome};
-      for(let j=0;j<hdrs.length;j++){
-        if(hdrs[j]) obj[hdrs[j]]=row[j]!==null&&row[j]!==undefined?row[j]:'';
-      }
-      resultado.push(obj);
-    }
-  });
-  return resultado;
-}
-
-function procFileObj(file,tipo){
-  showProgress('📂 Lendo '+file.name+'…',10);
-  const rd=new FileReader();
-  rd.onload=function(e){
-    setTimeout(function(){
-      try{
-        let rows=[];
-        showProgress('📊 Processando planilha…',35);
-        if(file.name.toLowerCase().endsWith('.csv')){
-          const txt=e.target.result;
-          const lines=txt.split(/\r?\n/);
-          const sep=lines[0].split(';').length>lines[0].split(',').length?';':',';
-          const l0cells=lines[0].split(sep).filter(function(c){return c.trim();}).length;
-          const hdrLine=l0cells<=2?1:0;
-          const hdrs=lines[hdrLine].split(sep).map(function(h){return h.trim().replace(/["']/g,'');});
-          for(let i=hdrLine+1;i<lines.length;i++){
-            if(!lines[i].trim()) continue;
-            const vals=lines[i].split(sep).map(function(v){return v.trim().replace(/["']/g,'');});
-            const o={};hdrs.forEach(function(h,j){o[h]=vals[j]||'';});rows.push(o);
-          }
-        } else {
-          showProgress('📊 Descompactando XLSX…',25);
-          const wb=XLSX.read(e.target.result,{type:'array',cellDates:true,dense:true});
-          showProgress('📊 Lendo abas…',45);
-          rows=lerAbasProtheus(wb);
-        }
-        if(!rows.length){toast('Arquivo vazio ou formato não reconhecido','error');hideProgress();return;}
-        showProgress('⚙️ Mapeando '+rows.length.toLocaleString('pt-BR')+' registros…',60);
-        processarEmChunks(rows,tipo);
-      }catch(err){
+// ═══════════════════════════════════════════════
+// WORKER MANAGER (Lê o arquivo s/ travar a tela)
+// ═══════════════════════════════════════════════
+function procFileObj(file, tipo){
+  showProgress('📂 Lendo '+file.name+'…', 10);
+  const isCSV = file.name.toLowerCase().endsWith('.csv');
+  const rd = new FileReader();
+  
+  rd.onload = function(e){
+    showProgress('⚙️ Processando (arquivos grandes levam tempo mas a tela não vai travar)…', 30);
+    
+    // Inicia o Worker em 2º plano
+    const workerCode = document.getElementById('worker-script').textContent;
+    const workerBlob = new Blob([workerCode], {type: 'application/javascript'});
+    const worker = new Worker(URL.createObjectURL(workerBlob));
+    
+    worker.onmessage = function(msg){
+      if(msg.data.success){
+        const rows = msg.data.data;
+        if(!rows.length){ toast('Arquivo vazio ou formato não reconhecido','error'); hideProgress(); return; }
+        showProgress('📊 Mapeando '+rows.length.toLocaleString('pt-BR')+' registros…', 60);
+        processarEmChunks(rows, tipo);
+      } else {
         hideProgress();
-        toast('Erro ao ler arquivo: '+err.message,'error');
-        console.error(err);
+        toast('Erro ao ler arquivo: ' + msg.data.error, 'error');
       }
-    },30);
+      worker.terminate();
+    };
+    
+    worker.onerror = function(err){
+      hideProgress();
+      toast('Erro no processador: ' + err.message, 'error');
+      worker.terminate();
+    };
+
+    if(isCSV){
+      worker.postMessage({ type: 'csv', text: e.target.result });
+    } else {
+      // Transferable Objects -> Não duplica memória RAM!
+      worker.postMessage({ type: 'xlsx', buffer: e.target.result }, [e.target.result]);
+    }
   };
-  rd.onerror=function(){hideProgress();toast('Erro ao ler o arquivo.','error');};
-  if(file.name.toLowerCase().endsWith('.csv')) rd.readAsText(file,'windows-1252');
+  
+  rd.onerror = function(){ hideProgress(); toast('Erro ao ler o arquivo.','error'); };
+  
+  if(isCSV) rd.readAsText(file, 'windows-1252');
   else rd.readAsArrayBuffer(file);
 }
 
@@ -1546,20 +1593,24 @@ function processarEmChunks(rows,tipo){
     if(elapsed<30&&chunk<8000) chunk=Math.min(chunk+500,8000);
     else if(elapsed>80&&chunk>500) chunk=Math.max(chunk-500,500);
     const pct=60+Math.round((i/total)*30);
-    showProgress('⚙️ Processando… '+i.toLocaleString('pt-BR')+' / '+total.toLocaleString('pt-BR'),pct);
+    showProgress('⚙️ Mapeando dados… '+i.toLocaleString('pt-BR')+' / '+total.toLocaleString('pt-BR'),pct);
     if(i<total){ requestAnimationFrame(step); return; }
-    showProgress('💾 Salvando…',95);
+    showProgress('💾 Montando Tabela…',95);
     setTimeout(function(){ finalizarImport(processados.filter(Boolean),tipo); },20);
   }
   requestAnimationFrame(step);
 }
 
 function finalizarImport(n,tipo){
+  // Uso otimizado de Map para liberar Array original logo e poupar RAM
   if(tipo==='pc'){
     const chave=function(x){return x.C7_FILIAL+'|'+x.C7_NUM+'|'+x.C7_PRODUTO;};
-    const idx=new Map(S.pc.map(function(x){return[chave(x),x];}));
-    n.forEach(function(x){idx.set(chave(x),x);});
-    S.pc=[...idx.values()];
+    const idx=new Map();
+    for(let i=0; i<S.pc.length; i++) idx.set(chave(S.pc[i]), S.pc[i]);
+    S.pc = []; // Libera RAM antiga
+    for(let i=0; i<n.length; i++) idx.set(chave(n[i]), n[i]);
+    S.pc=Array.from(idx.values());
+    idx.clear();
     rebuildIdxPC();
     updBadges();_salvarAgora();
     hideProgress();
@@ -1567,9 +1618,12 @@ function finalizarImport(n,tipo){
     setTimeout(function(){nav('pedidos');},700);
   } else if(tipo==='sc'){
     const chave=function(x){return x.C1_FILIAL+'|'+x.C1_NUM+'|'+x.C1_ITEM+'|'+x.C1_PRODUTO;};
-    const idx=new Map(S.sc.map(function(x){return[chave(x),x];}));
-    n.forEach(function(x){idx.set(chave(x),x);});
-    S.sc=[...idx.values()];
+    const idx=new Map();
+    for(let i=0; i<S.sc.length; i++) idx.set(chave(S.sc[i]), S.sc[i]);
+    S.sc = [];
+    for(let i=0; i<n.length; i++) idx.set(chave(n[i]), n[i]);
+    S.sc=Array.from(idx.values());
+    idx.clear();
     rebuildIdxSC();
     updBadges();_salvarAgora();
     hideProgress();
@@ -1577,9 +1631,12 @@ function finalizarImport(n,tipo){
     setTimeout(function(){nav('sc');},700);
   } else {
     const chave=function(x){return x.B1_KEY||x.B1_FILIAL+'|'+x.B1_COD;};
-    const idx=new Map(S.est.map(function(x){return[chave(x),x];}));
-    n.forEach(function(x){idx.set(chave(x),x);});
-    S.est=[...idx.values()];
+    const idx=new Map();
+    for(let i=0; i<S.est.length; i++) idx.set(chave(S.est[i]), S.est[i]);
+    S.est = [];
+    for(let i=0; i<n.length; i++) idx.set(chave(n[i]), n[i]);
+    S.est=Array.from(idx.values());
+    idx.clear();
     rebuildIdxEst();
     S.vs.est._data=[];
     S.vs.est.start=0;
@@ -1590,14 +1647,35 @@ function finalizarImport(n,tipo){
   }
 }
 
+const _mpCache = new WeakMap();
+function _norm(s){ return String(s||'').trim().toLowerCase().replace(/[^a-z0-9]/g,''); }
 function mp(obj,...cs){
+  let norm = _mpCache.get(obj);
+  if(!norm){
+    norm={};
+    for(const k of Object.keys(obj)){
+      const kl=k.trim().toLowerCase();
+      const kn=_norm(k);
+      if(!norm[kl]) norm[kl]={k,v:String(obj[k]||'').trim()};
+      if(!norm[kn]) norm[kn]={k,v:String(obj[k]||'').trim()};
+    }
+    _mpCache.set(obj,norm);
+  }
   for(const c of cs){
-    const v = obj[c];
-    if(v !== undefined && v !== null && v !== '') return String(v).trim();
+    const hit=norm[c.trim().toLowerCase()]||norm[_norm(c)];
+    if(hit&&hit.v!=='') return hit.v;
+  }
+  const nc=cs.map(c=>_norm(c));
+  for(const c of nc){
+    for(const key of Object.keys(norm)){
+      if(key.includes(c)||c.includes(key)){
+        const v=norm[key].v;
+        if(v!=='') return v;
+      }
+    }
   }
   return '';
 }
-
 function nTipo(v,um=''){const s=String(v).toUpperCase();const u=String(um).toUpperCase().trim();if(u==='SV')return'S';return(s==='S'||s.includes('DIRETO')||s.includes('SERVICO'))?'S':'R';}
 function nStPC(v,quje,qtd){
   const s=String(v||'').toUpperCase().trim();
@@ -1688,7 +1766,40 @@ function mapEst(rows,offset){
   });
 }
 
-// (Restante das funções como salvar, carregar, render etc mantidas para não quebrar o sistema)
+// ═══════════════════════════════════════════════
+// GUIA
+// ═══════════════════════════════════════════════
+function rAjuda(){
+  const steps=[
+    {n:1,c:'var(--accent)',t:'Exportar MATA121 — Pedido de Compra (SC7)',
+     d:'No Protheus vá em <strong style="color:var(--text)">Compras → Pedido de Compras (MATA121)</strong>. Na listagem do browse use <strong style="color:var(--text)">Outras Ações → Exportar → Excel</strong>. O relatório exporta: <span style="color:var(--accent);font-family:var(--mono)">Numero, Fornecedor (CNPJ), Produto, Descricao, Prc Unitario, Quantidade, Unidade, Classe Valor, Centro Custo, Data Emissao, Dt. Entrega, Numero da SC, Qtd.Entregue</span>. O campo <strong>Tipo (Estoque/Direto)</strong> é deduzido pela <strong>Unidade = SV</strong>.'},
+    {n:2,c:'var(--teal)',t:'Exportar MATA110 — Solicitação de Compra (SC1)',
+     d:'Vá em <strong style="color:var(--text)">Compras → Solicitação de Compras (MATA110)</strong>. Use <strong style="color:var(--text)">Outras Ações → Exportar → Excel</strong>. Colunas exportadas: <span style="color:var(--accent);font-family:var(--mono)">Numero da SC, Item da SC, Produto, Descricao, Quantidade, Unid Medida, Classe Valor, Valor Estim., DT Emissao, Centro Custo, Quant.em Ped, Grupo</span>. <strong>Quant.em Ped > 0</strong> indica que a SC gerou Pedido de Compra. Tipo Serviço é detectado por <strong>Unid Medida = SV</strong>.'},
+    {n:3,c:'var(--accent2)',t:'Exportar MATR290 — Análise de Estoque (SB1/SB2)',
+     d:'Vá em <strong style="color:var(--text)">Estoque → Relatórios → Análise de Estoques (MATR290)</strong>. Configure para mostrar B2_QATU (saldo atual), B2_EMPENHO (reservado), B2_SALPEDI (em pedido de compra) e B2_CM1 (custo médio). Este relatório cruza SB1 (cadastro de produtos) com SB2 (saldos por armazém).'},
+    {n:4,c:'var(--green)',t:'Importar no Monitor',
+     d:'Clique em <strong style="color:var(--text)">Importar Planilhas</strong>. Cada painel aceita o arquivo da rotina correspondente: MATA121, MATA110 ou MATR290. Pode arrastar o arquivo direto ou clicar em Selecionar. O sistema mapeia automaticamente os nomes de coluna — padrão Protheus (C7_NUM) ou título em português (Número do Pedido).'},
+    {n:5,c:'var(--amber)',t:'Monitorar e filtrar',
+     d:'<strong style="color:var(--text)">Dashboard</strong>: KPIs gerais com alertas. <strong style="color:var(--text)">Pedidos SC7</strong>: filtre por C7_TIPO (Estoque/Direto), status (Liberado, Parcial, Cancelado…), busque qualquer campo. <strong style="color:var(--text)">Solicitações SC1</strong>: veja SC sem pedido gerado (C1_PEDIDO vazio). <strong style="color:var(--text)">Estoque</strong>: produtos críticos (B2_QATU − B2_EMPENHO ≤ 0). Clique em qualquer linha para ver todos os campos.'},
+    {n:6,c:'var(--muted)',t:'Atualizar dados',
+     d:'Para atualizar com nova exportação do Protheus, basta importar novamente — os registros são acumulados. Para começar do zero clique em <strong style="color:var(--text)">Limpar</strong> no topo. Os dados ficam salvos automaticamente no navegador entre sessões.'},
+  ];
+  return`
+  <div class="sh"><div class="sh-title">Guia de Uso — Passo a Passo</div><div class="sh-sub">MATA110 · MATA121 · MATR290 — do zero ao monitor</div></div>
+  <div class="step-grid">
+    ${steps.map(s=>`<div class="step">
+      <div class="step-n" style="background:${s.c}18;border:1.5px solid ${s.c};color:${s.c}">${s.n}</div>
+      <div><div class="step-t">${s.t}</div><div class="step-d">${s.d}</div></div>
+    </div>`).join('')}
+  </div>
+  <div class="info-box">
+    <div class="info-box-t">💡 C7_TIPO e C1_TIPO — diferença entre Estoque e Uso Direto</div>
+    <div class="info-box-d">
+      O monitor detecta o tipo automaticamente pela coluna <span style="color:var(--accent);font-family:var(--mono)">Unidade / Unid Medida</span>: quando o valor é <span style="color:var(--accent2)">SV</span>, o item é classificado como <span style="color:var(--accent2)">Serviço / Uso Direto</span> (sem movimentação de estoque). Qualquer outra unidade (UN, KG, MT, PC…) é classificado como <span style="color:var(--accent)">Estoque</span>. O status da SC é inferido pela coluna <span style="color:var(--accent);font-family:var(--mono)">Quant.em Ped</span>: valor &gt; 0 indica que a SC gerou Pedido de Compra.
+    </div>
+  </div>`;
+}
+
 // ═══════════════════════════════════════════════
 // PERSISTÊNCIA & INIT
 // ═══════════════════════════════════════════════
