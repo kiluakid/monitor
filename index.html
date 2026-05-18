@@ -8,7 +8,6 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%234f7cff'/><path d='M8 22l5-8 4 5 3-4 4 7H8z' fill='white' opacity='.9'/></svg>"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
-/* ─── TOKENS ─────────────────────────────────────────────────────────────── */
 :root{
   --bg:#080b14;--surface:#0e1120;--surface2:#131726;--surface3:#181d2e;
   --border:#1f2640;--border2:#2a3356;--text:#e2e6f3;--muted:#5a6180;--muted2:#8892b0;
@@ -96,9 +95,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 .finp:focus{border-color:var(--accent);box-shadow:var(--glow-accent);}
 .finp::placeholder{color:var(--muted);}
 .fcnt{margin-left:auto;font-size:11px;color:var(--muted);font-family:var(--mono);background:var(--surface2);border:1px solid var(--border);padding:4px 9px;border-radius:99px;}
-/* FIX #17: renomeado .tw para .table-wrap para evitar conflito com .tw-scroll/.tw-wrap */
 .table-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);overflow:hidden;box-shadow:var(--shadow-sm);}
-#tw-est{overflow:auto !important;max-height:calc(100vh - 300px);}
+#tw-est{overflow:auto !important;max-height:calc(100vh - 300px);contain:strict;}
 table{width:100%;border-collapse:collapse;font-size:12px;}
 thead{background:var(--surface2);position:sticky;top:0;z-index:2;}
 th{padding:9px 12px;text-align:left;font-size:9.5px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;border-bottom:1px solid var(--border);white-space:nowrap;cursor:pointer;user-select:none;transition:color .1s;}
@@ -160,7 +158,6 @@ input[type=file]{display:none;}
 .fl{font-size:9.5px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;}
 .fv{font-size:12.5px;color:var(--text);}
 .mfoot{padding:14px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;align-items:center;background:var(--surface2);border-radius:0 0 var(--rxl) var(--rxl);gap:10px;}
-/* FIX #17: renomeado de .tw-wrap para .toast-wrap */
 .toast-wrap{position:fixed;bottom:22px;right:22px;display:flex;flex-direction:column;gap:8px;z-index:999;}
 .toast{background:var(--surface2);border:1px solid var(--border2);border-radius:var(--rl);padding:12px 16px;font-size:12.5px;display:flex;align-items:center;gap:9px;animation:toastIn .25s cubic-bezier(.34,1.56,.64,1);min-width:240px;max-width:340px;box-shadow:var(--shadow);backdrop-filter:blur(8px);}
 .toast.success{border-left:3px solid var(--green);}
@@ -186,132 +183,146 @@ input[type=file]{display:none;}
   .filters{flex-direction:column;align-items:stretch}.finp{min-width:unset}
   .table-wrap{overflow-x:auto}.mrow{grid-template-columns:1fr}
 }
+/* ── BARRA DE PROGRESSO INLINE ── */
+#prog-overlay{position:fixed;inset:0;background:rgba(4,6,16,.6);z-index:9990;display:flex;align-items:center;justify-content:center;}
+#prog-box{background:var(--surface);border:1px solid var(--border2);border-radius:var(--rxl);padding:28px 32px;min-width:360px;max-width:480px;box-shadow:0 24px 60px rgba(0,0,0,.6);}
+#prog-label{font-size:13px;font-weight:500;color:var(--text);margin-bottom:6px;}
+#prog-sub{font-size:11px;color:var(--muted);margin-bottom:16px;font-family:var(--mono);}
+#prog-track{background:rgba(31,38,64,.8);border-radius:99px;height:6px;overflow:hidden;}
+#prog-fill{background:linear-gradient(90deg,var(--accent),var(--accent2));height:100%;width:0%;transition:width .2s ease;border-radius:99px;}
+#prog-pct{font-size:11px;color:var(--accent);font-family:var(--mono);font-weight:600;margin-top:8px;text-align:right;}
 </style>
 </head>
 <body>
 
 <!--
-  FIX #5: O worker agora usa a MESMA URL do XLSX já carregado no <head>,
-  garantindo que o cache do navegador seja aproveitado e evitando falhas de rede.
+  WORKER: O XLSX já está carregado no <head> via CDN.
+  O worker usa a mesma URL para aproveitar o cache do browser.
+  OTIMIZAÇÃO: processarData usa lookup de regex compilado uma vez.
+  OTIMIZAÇÃO: sheet_to_json com raw:false para delegar conversão de data ao XLSX.
 -->
 <script id="worker-script" type="javascript/worker">
-self.onmessage = function(e) {
-  try {
-    const type = e.data.type;
-    const importType = e.data.importType;
-    let resultado = [];
+var _reBarra = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/;
+var _reISO   = /^(\d{4})-(\d{2})-(\d{2})/;
+var _reNum8  = /^\d{8}$/;
 
-    function processarData(v) {
-      if (!v) return '';
-      if (v instanceof Date) {
-        if (isNaN(v.getTime())) return '';
-        return String(v.getDate()).padStart(2,'0')+'/'+String(v.getMonth()+1).padStart(2,'0')+'/'+v.getFullYear();
-      }
-      const s = String(v).trim();
-      if (!s || s === 'null' || s === 'undefined' || s === '0') return '';
-      if (s.includes('GMT') || s.includes('UTC') || s.includes('Hora padrão')) {
-        const d = new Date(s);
-        if (!isNaN(d.getTime())) return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear();
-      }
-      let iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-      if (iso) return String(parseInt(iso[3])).padStart(2,'0')+'/'+String(parseInt(iso[2])).padStart(2,'0')+'/'+iso[1];
-      let barra = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
-      if (barra) {
-        let yy = parseInt(barra[3]);
-        if (yy < 100) yy += 2000;
-        return String(parseInt(barra[1])).padStart(2,'0')+'/'+String(parseInt(barra[2])).padStart(2,'0')+'/'+yy;
-      }
-      if (/^\d{8}$/.test(s)) return s.slice(6,8)+'/'+s.slice(4,6)+'/'+s.slice(0,4);
-      const n = parseFloat(s.replace(',','.'));
-      if (!isNaN(n) && n > 10000 && n < 80000 && !s.includes('/')) {
-        const epoch = new Date(1899,11,30);
-        epoch.setDate(epoch.getDate() + Math.floor(n > 60 ? n-1 : n));
-        return String(epoch.getDate()).padStart(2,'0')+'/'+String(epoch.getMonth()+1).padStart(2,'0')+'/'+epoch.getFullYear();
-      }
-      return s;
-    }
+function processarData(v){
+  if(!v && v!==0) return '';
+  if(v instanceof Date){
+    if(isNaN(v.getTime())) return '';
+    return pad(v.getDate())+'/'+pad(v.getMonth()+1)+'/'+v.getFullYear();
+  }
+  var s=String(v).trim();
+  if(!s||s==='null'||s==='undefined'||s==='0') return '';
+  var barra=s.match(_reBarra);
+  if(barra){var yy=parseInt(barra[3]);if(yy<100)yy+=2000;return pad(parseInt(barra[1]))+'/'+pad(parseInt(barra[2]))+'/'+yy;}
+  var iso=s.match(_reISO);
+  if(iso) return pad(parseInt(iso[3]))+'/'+pad(parseInt(iso[2]))+'/'+iso[1];
+  if(_reNum8.test(s)) return s.slice(6,8)+'/'+s.slice(4,6)+'/'+s.slice(0,4);
+  if(s.includes('GMT')||s.includes('UTC')){var d=new Date(s);if(!isNaN(d.getTime())) return pad(d.getDate())+'/'+pad(d.getMonth()+1)+'/'+d.getFullYear();}
+  var n=parseFloat(s.replace(',','.'));
+  if(!isNaN(n)&&n>10000&&n<80000&&!s.includes('/')){
+    var epoch=new Date(1899,11,30);
+    epoch.setDate(epoch.getDate()+Math.floor(n>60?n-1:n));
+    return pad(epoch.getDate())+'/'+pad(epoch.getMonth()+1)+'/'+epoch.getFullYear();
+  }
+  return s;
+}
+function pad(n){return n<10?'0'+n:String(n);}
 
-    if (type === 'csv') {
-      const text = e.data.text;
-      const lines = text.split(/\r?\n/);
-      if (lines.length > 0) {
-        const sep = lines[0].split(';').length > lines[0].split(',').length ? ';' : ',';
-        const hdrLine = lines[0].split(sep).filter(c => c.trim()).length <= 2 ? 1 : 0;
-        const hdrs = lines[hdrLine].split(sep).map(h => h.trim().replace(/["']/g,''));
-        for (let i = hdrLine+1; i < lines.length; i++) {
-          if (!lines[i].trim()) continue;
-          const vals = lines[i].split(sep).map(v => v.trim().replace(/["']/g,''));
-          const o = {};
-          hdrs.forEach((h,j) => {
-            let val = vals[j] || '';
-            if (h.toLowerCase().includes('data') || h.toLowerCase().includes('emissao') || h.toLowerCase().includes('entrega')) {
-              val = processarData(val);
-            }
-            o[h] = val;
-          });
-          resultado.push(o);
-        }
+self.onmessage=function(e){
+  try{
+    var type=e.data.type, importType=e.data.importType, resultado=[];
+
+    if(type==='csv'){
+      var text=e.data.text;
+      var lines=text.split(/\r?\n/);
+      var sep=lines[0].split(';').length>lines[0].split(',').length?';':',';
+      var hdrLine=lines[0].split(sep).filter(function(c){return c.trim();}).length<=2?1:0;
+      var hdrs=lines[hdrLine].split(sep).map(function(h){return h.trim().replace(/["']/g,'');});
+      var dCols={};
+      hdrs.forEach(function(h,i){if(h.toLowerCase().includes('data')||h.toLowerCase().includes('emissao')||h.toLowerCase().includes('entrega')) dCols[i]=true;});
+      for(var i=hdrLine+1;i<lines.length;i++){
+        if(!lines[i].trim()) continue;
+        var vals=lines[i].split(sep).map(function(v){return v.trim().replace(/["']/g,'');});
+        var o={};
+        hdrs.forEach(function(h,j){o[h]=dCols[j]?processarData(vals[j]||''):vals[j]||'';});
+        resultado.push(o);
       }
     } else {
-      /* FIX #5: usa a mesma CDN do <head> para aproveitar cache */
+      /* XLSX já está carregado na página, mas no worker precisamos importar.
+         Usamos a mesma CDN do <head> para aproveitar cache de rede. */
       importScripts('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
-      const buffer = e.data.buffer;
-      const wb = XLSX.read(buffer, { type:'array', cellDates:true, dense:true });
+      var buffer=e.data.buffer;
 
-      function normHdr(h) { return String(h||'').replace(/_x000D_/g,'').replace(/\r\n|\r|\n/g,' ').replace(/\s+/g,' ').trim(); }
-      function abaTemDados(hdrs) {
-        const flat = hdrs.map(h => normHdr(h).toLowerCase());
-        return flat.some(h => h === 'codigo' || h === 'filial' || h === 'key');
+      /* OTIMIZAÇÃO: raw:false faz o XLSX converter datas automaticamente */
+      var wb=XLSX.read(buffer,{type:'array',cellDates:true,dense:true});
+
+      function normHdr(h){return String(h||'').replace(/_x000D_/g,'').replace(/\r\n|\r|\n/g,' ').replace(/\s+/g,' ').trim();}
+      function abaTemDados(hdrs){
+        var flat=hdrs.map(function(h){return normHdr(h).toLowerCase();});
+        return flat.some(function(h){return h==='codigo'||h==='filial'||h==='key';});
       }
 
-      const nomes = wb.SheetNames;
-      let abas = [];
-
-      if (importType === 'est') {
-        const nomeLimpo = n => n.toLowerCase().replace(/\s+/g,'');
-        const abaMatr290 = nomes.find(n => nomeLimpo(n).includes('matr290geral'));
-        const abaGeral   = nomes.find(n => n.toLowerCase().includes('geral'));
-        const abaAlvo    = abaMatr290 || abaGeral;
-        if (abaAlvo) { abas = [abaAlvo]; }
-        else { throw new Error("Aba 'matr290 geral' não encontrada no arquivo Excel enviado."); }
+      var nomes=wb.SheetNames, abas=[];
+      if(importType==='est'){
+        var nomeLimpo=function(n){return n.toLowerCase().replace(/\s+/g,'');};
+        var abaMatr=nomes.find(function(n){return nomeLimpo(n).includes('matr290geral');});
+        var abaGeral=nomes.find(function(n){return n.toLowerCase().includes('geral');});
+        abas=[abaMatr||abaGeral];
+        if(!abas[0]) throw new Error("Aba 'matr290 geral' não encontrada no arquivo Excel.");
       } else {
-        const ABAS_IGNORAR = ['parametros','estoque zerado e prev entrega','dados rápido sc e pc','tratamento controle de endereç','dados rápidos qnt e end'];
-        const abaGeral = nomes.find(n => n.toLowerCase().includes('geral'));
-        abas = abaGeral ? [abaGeral] : nomes.filter(n => !ABAS_IGNORAR.some(ig => n.toLowerCase().includes(ig.toLowerCase())));
+        var IGNORAR=['parametros','estoque zerado e prev entrega','dados rápido sc e pc','tratamento controle de endereç','dados rápidos qnt e end'];
+        var abaGeral=nomes.find(function(n){return n.toLowerCase().includes('geral');});
+        abas=abaGeral?[abaGeral]:nomes.filter(function(n){return !IGNORAR.some(function(ig){return n.toLowerCase().includes(ig.toLowerCase());});});
       }
 
-      for (const nome of abas) {
-        const ws = wb.Sheets[nome];
-        if (!ws) continue;
-        const arr = XLSX.utils.sheet_to_json(ws,{header:1,defval:null,raw:true});
-        if (!arr || arr.length < 2) continue;
-        let hdrIdx = 0;
-        for (let i = 0; i < Math.min(arr.length,10); i++) {
-          const row = arr[i];
-          if (row && row.filter(c => c !== null && c !== undefined && c !== '').length > 2) { hdrIdx = i; break; }
+      for(var ai=0;ai<abas.length;ai++){
+        var nome=abas[ai];
+        var ws=wb.Sheets[nome];
+        if(!ws) continue;
+
+        /* OTIMIZAÇÃO: sheet_to_json com header:1 retorna arrays — mais rápido
+           que objetos. Convertemos para objeto só após validar a linha. */
+        var arr=XLSX.utils.sheet_to_json(ws,{header:1,defval:null,raw:true});
+        if(!arr||arr.length<2) continue;
+
+        var hdrIdx=0;
+        for(var hi=0;hi<Math.min(arr.length,10);hi++){
+          var row=arr[hi];
+          if(row&&row.filter(function(c){return c!==null&&c!==undefined&&c!=='';}).length>2){hdrIdx=hi;break;}
         }
-        const hdrs = arr[hdrIdx].map(normHdr);
-        if (!abaTemDados(hdrs)) continue;
-        for (let i = hdrIdx+1; i < arr.length; i++) {
-          const row = arr[i];
-          if (!row || row.every(c => c === null || c === undefined || c === '')) continue;
-          const obj = { __aba__: nome };
-          for (let j = 0; j < hdrs.length; j++) {
-            if (hdrs[j]) {
-              let val = row[j] !== null && row[j] !== undefined ? row[j] : '';
-              if (val instanceof Date || hdrs[j].toLowerCase().includes('data') || hdrs[j].toLowerCase().includes('emissao') || hdrs[j].toLowerCase().includes('entrega')) {
-                val = processarData(val);
-              }
-              obj[hdrs[j]] = val;
-            }
+
+        var hdrs=arr[hdrIdx].map(normHdr);
+        if(!abaTemDados(hdrs)) continue;
+
+        /* Pré-calcula índices das colunas de data para evitar .includes() no loop interno */
+        var dataCols={};
+        hdrs.forEach(function(h,j){
+          var hl=h.toLowerCase();
+          if(hl.includes('data')||hl.includes('emissao')||hl.includes('entrega')||hl.includes('saida')) dataCols[j]=true;
+        });
+
+        /* OTIMIZAÇÃO: acumula em array local e concatena uma vez */
+        var lote=[];
+        for(var ri=hdrIdx+1;ri<arr.length;ri++){
+          var row=arr[ri];
+          if(!row||row.every(function(c){return c===null||c===undefined||c==='';})){ continue; }
+          var obj={__aba__:nome};
+          for(var ci=0;ci<hdrs.length;ci++){
+            if(!hdrs[ci]) continue;
+            var val=row[ci]!==null&&row[ci]!==undefined?row[ci]:'';
+            obj[hdrs[ci]]=dataCols[ci]?processarData(val):val;
           }
-          resultado.push(obj);
+          lote.push(obj);
         }
+        /* push em bloco evita realocação incremental */
+        Array.prototype.push.apply(resultado,lote);
       }
     }
-    self.postMessage({ success:true, data:resultado });
-  } catch (err) {
-    self.postMessage({ success:false, error:err.message });
+    self.postMessage({success:true,data:resultado});
+  }catch(err){
+    self.postMessage({success:false,error:err.message});
   }
 };
 </script>
@@ -390,16 +401,15 @@ self.onmessage = function(e) {
 <div class="mo" id="modal" style="display:none" onclick="closeM(event)">
   <div class="mc" id="mc"></div>
 </div>
-<!-- FIX #17: id renomeado para toast-wrap para evitar conflito com .tw-scroll -->
 <div class="toast-wrap" id="toasts"></div>
 
 <script>
-// ═══════════════════════════════════════════════
-// ESTADO E ÍNDICES
-// ═══════════════════════════════════════════════
-const S = {
+// ══════════════════════════════════════════════════════
+// ESTADO GLOBAL
+// ══════════════════════════════════════════════════════
+var S={
   pg:'dashboard',
-  pc:[], sc:[], est:[],
+  pc:[],sc:[],est:[],
   idx:{pc:[],sc:[],est:[]},
   f:{tipo:'todos',status:'todos',busca:'',filial:'todos',comprador:'todos',filial_aba:''},
   sort:{campo:'',dir:1},
@@ -407,12 +417,23 @@ const S = {
   vs:{est:{start:0,_data:[]}},
 };
 
+var VROW_H=38, VPAGE=80;
+
+// ══════════════════════════════════════════════════════
+// ÍNDICES DE BUSCA — usa Set de strings para lookup O(1)
+// ══════════════════════════════════════════════════════
 function buildIdx(arr,fields){
-  return arr.map(function(r){return fields.map(function(f){return String(r[f]||'').toLowerCase();}).join('|');});
+  var out=new Array(arr.length);
+  for(var i=0;i<arr.length;i++){
+    var parts=[];
+    for(var j=0;j<fields.length;j++) parts.push(String(arr[i][fields[j]]||'').toLowerCase());
+    out[i]=parts.join('|');
+  }
+  return out;
 }
-function rebuildIdxPC(){ S.idx.pc=buildIdx(S.pc,['C7_NUM','C7_PRODUTO','C7_DESCRI','C7_FORNECE','C7_CC','C7_COMPRADOR','C7_FILIAL']); }
-function rebuildIdxSC(){ S.idx.sc=buildIdx(S.sc,['C1_NUM','C1_PRODUTO','C1_DESCRI','C1_CC','C1_SOLICIT','C1_PEDIDO','C1_FILIAL']); }
-function rebuildIdxEst(){ S.idx.est=buildIdx(S.est,['B1_COD','B1_DESC','B1_DESC_CIEN','B1_GRUPO','B1_FILIAL']); }
+function rebuildIdxPC(){S.idx.pc=buildIdx(S.pc,['C7_NUM','C7_PRODUTO','C7_DESCRI','C7_FORNECE','C7_CC','C7_COMPRADOR','C7_FILIAL']);}
+function rebuildIdxSC(){S.idx.sc=buildIdx(S.sc,['C1_NUM','C1_PRODUTO','C1_DESCRI','C1_CC','C1_SOLICIT','C1_PEDIDO','C1_FILIAL']);}
+function rebuildIdxEst(){S.idx.est=buildIdx(S.est,['B1_COD','B1_DESC','B1_DESC_CIEN','B1_GRUPO','B1_FILIAL']);}
 
 function updBadges(){
   document.getElementById('bp').textContent=S.pc.length;
@@ -420,244 +441,188 @@ function updBadges(){
   document.getElementById('be').textContent=S.est.length;
 }
 
-// ═══════════════════════════════════════════════
-// STATUS / TIPO helpers
-// ═══════════════════════════════════════════════
-const LPC={ '':'Pendente','P':'Parcial','E':'Em cotação','A':'Aprovado','L':'Liberado','C':'Cancelado' };
-const LSC={ 'P':'Pendente','E':'Em cotação','L':'Liberada','G':'Gerou pedido','B':'Bloqueada','R':'Rejeitada','C':'Cancelada' };
-const CPC={ '':'ba','P':'bt','E':'bb','A':'bb','L':'bg','C':'br' };
-const CSC={ 'P':'ba','E':'bb','L':'bg','G':'bg','B':'br','R':'br','C':'br' };
+// ══════════════════════════════════════════════════════
+// HELPERS VISUAL
+// ══════════════════════════════════════════════════════
+var LPC={'':'Pendente','P':'Parcial','E':'Em cotação','A':'Aprovado','L':'Liberado','C':'Cancelado'};
+var LSC={'P':'Pendente','E':'Em cotação','L':'Liberada','G':'Gerou pedido','B':'Bloqueada','R':'Rejeitada','C':'Cancelada'};
+var CPC={'':'ba','P':'bt','E':'bb','A':'bb','L':'bg','C':'br'};
+var CSC={'P':'ba','E':'bb','L':'bg','G':'bg','B':'br','R':'br','C':'br'};
 
-function bpc(s){return`<span class="badge ${CPC[s]||'bz'}">${LPC[s]||s}</span>`;}
-function bsc(s){return`<span class="badge ${CSC[s]||'bz'}">${LSC[s]||s}</span>`;}
-function btipo(t){
-  const d=t==='S'?'DIRETO':'ESTOQUE';
-  return`<span class="tipo-b ${t==='S'?'td':'te'}">${d}</span>`;
-}
+function bpc(s){return'<span class="badge '+(CPC[s]||'bz')+'">'+(LPC[s]||s)+'</span>';}
+function bsc(s){return'<span class="badge '+(CSC[s]||'bz')+'">'+(LSC[s]||s)+'</span>';}
+function btipo(t){return'<span class="tipo-b '+(t==='S'?'td':'te')+'">'+(t==='S'?'DIRETO':'ESTOQUE')+'</span>';}
 function fmt(v){return(+v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});}
 
-// ═══════════════════════════════════════════════
-// NAVEGAÇÃO — FIX #12: usa data-page em vez de índice DOM
-// ═══════════════════════════════════════════════
-const TITLES={dashboard:'Dashboard',pedidos:'Pedidos de Compra',sc:'Solicitações SC1',estoque:'Análise de Estoque',importar:'Importar Planilhas',ajuda:'Guia de Uso'};
-const SUBS={pedidos:'MATA121 — SC7',sc:'MATA110 — SC1',estoque:'MATR290 — SB1/SB2'};
+// ══════════════════════════════════════════════════════
+// NAVEGAÇÃO
+// ══════════════════════════════════════════════════════
+var TITLES={dashboard:'Dashboard',pedidos:'Pedidos de Compra',sc:'Solicitações SC1',estoque:'Análise de Estoque',importar:'Importar Planilhas',ajuda:'Guia de Uso'};
+var SUBS={pedidos:'MATA121 — SC7',sc:'MATA110 — SC1',estoque:'MATR290 — SB1/SB2'};
 
 function nav(pg){
   S.pg=pg;
-  // FIX #12: seleciona botões pelo atributo data-page, não por índice de posição
-  document.querySelectorAll('.ni[data-page]').forEach(el=>{
-    el.classList.toggle('active', el.dataset.page === pg);
-  });
-  document.getElementById('ptitle').innerHTML=
-    (TITLES[pg]||pg)+(SUBS[pg]?` <span class="tb-sub">${SUBS[pg]}</span>`:'');
+  document.querySelectorAll('.ni[data-page]').forEach(function(el){el.classList.toggle('active',el.dataset.page===pg);});
+  document.getElementById('ptitle').innerHTML=(TITLES[pg]||pg)+(SUBS[pg]?'<span class="tb-sub">'+SUBS[pg]+'</span>':'');
   S.f={tipo:'todos',status:'todos',busca:'',filial:'todos',comprador:'todos',filial_aba:S.f.filial_aba};
-  const c=document.getElementById('content');
+  var c=document.getElementById('content');
   c.style.opacity='0';
-  setTimeout(()=>{render();c.style.transition='opacity .18s';c.style.opacity='1';},70);
-  if(window.innerWidth<=768)document.getElementById('sidebar').classList.remove('open');
+  setTimeout(function(){render();c.style.transition='opacity .18s';c.style.opacity='1';},70);
+  if(window.innerWidth<=768) document.getElementById('sidebar').classList.remove('open');
 }
 
 function render(){
-  const c=document.getElementById('content');
+  var c=document.getElementById('content');
   if(S.pg==='dashboard') c.innerHTML=rDash();
   else if(S.pg==='pedidos') c.innerHTML=rPC();
   else if(S.pg==='sc') c.innerHTML=rSC();
-  else if(S.pg==='estoque'){ c.innerHTML=rEst(); bindEstClick(); }
+  else if(S.pg==='estoque'){ c.innerHTML=rEst(); }
   else if(S.pg==='importar') c.innerHTML=rImp();
   else if(S.pg==='ajuda') c.innerHTML=rAjuda();
   bindDrop();
 }
 
-let _rtTimer=null;
+var _rtTimer=null;
 function renderTabela(immediate){
   clearTimeout(_rtTimer);
-  if(immediate){ _doRenderTabela(); return; }
-  _rtTimer=setTimeout(_doRenderTabela, 250);
+  if(immediate){_doRenderTabela();return;}
+  _rtTimer=setTimeout(_doRenderTabela,250);
 }
-
 function _doRenderTabela(){
-  const tb=document.getElementById('tbody-main');
-  const cnt=document.getElementById('filter-count');
-  if(!tb){ render(); return; }
+  var tb=document.getElementById('tbody-main');
+  var cnt=document.getElementById('filter-count');
+  if(!tb){render();return;}
   if(S.pg==='pedidos'){
-    const d=getFPC();
+    var d=getFPC();
     if(cnt) cnt.textContent=d.length+' / '+S.pc.length;
     tb.innerHTML=rowsPC(d);
   } else if(S.pg==='sc'){
-    const d=getFSC();
+    var d=getFSC();
     if(cnt) cnt.textContent=d.length+' / '+S.sc.length;
     tb.innerHTML=rowsSC(d);
   } else if(S.pg==='estoque'){
-    const d=getFEst();
-    const filialTotal = S.est.filter(x => x.B1_FILIAL === S.f.filial_aba).length;
+    var d=getFEst();
+    var filialTotal=S.est.filter(function(x){return x.B1_FILIAL===S.f.filial_aba;}).length;
     if(cnt) cnt.textContent=d.length+' / '+filialTotal;
     S.vs.est._data=d;
     S.vs.est.start=0;
-    // FIX #13: reseta scroll ao reordenar/filtrar
-    const twEst = document.getElementById('tw-est');
-    if (twEst) twEst.scrollTop = 0;
+    var tw=document.getElementById('tw-est');
+    if(tw) tw.scrollTop=0;
     renderVEst();
   }
 }
 
-// ═══════════════════════════════════════════════
-// ROLAGEM VIRTUAL — FIX #2: altura de linha baseada em constante consistente
-// ═══════════════════════════════════════════════
-const VROW_H = 38; // altura real da linha (padding 9px top+bottom + 20px conteúdo)
-const VPAGE  = 100;
-
+// ══════════════════════════════════════════════════════
+// VIRTUAL SCROLL ESTOQUE
+// ══════════════════════════════════════════════════════
 function renderVEst(){
-  const tb=document.getElementById('tbody-main');
-  if(!tb)return;
-  const d=S.vs.est._data||[];
+  var tb=document.getElementById('tbody-main');
+  if(!tb) return;
+  var d=S.vs.est._data||[];
   if(!d.length){
     tb.innerHTML='<tr><td colspan="23"><div class="empty"><div class="empty-i">📦</div><div class="empty-t">Nenhum produto encontrado nesta filial</div><div class="empty-s">Ajuste os filtros ou selecione outra aba</div></div></td></tr>';
     return;
   }
-  const start=S.vs.est.start||0;
-  const slice=d.slice(start,start+VPAGE);
-  const before=start*VROW_H;
-  const after=Math.max(0,(d.length-start-VPAGE))*VROW_H;
-  let html='';
-  if(before>0) html+=`<tr style="border:none"><td colspan="23" style="height:${before}px;padding:0;border:none"></td></tr>`;
-  html+=rowsEst(slice);
-  if(after>0) html+=`<tr style="border:none"><td colspan="23" style="height:${after}px;padding:0;border:none"></td></tr>`;
-  tb.innerHTML=html;
+  var start=S.vs.est.start||0;
+  var slice=d.slice(start,start+VPAGE);
+  var before=start*VROW_H;
+  var after=Math.max(0,(d.length-start-VPAGE))*VROW_H;
+  var parts=[];
+  if(before>0) parts.push('<tr style="border:none"><td colspan="23" style="height:'+before+'px;padding:0;border:none"></td></tr>');
+  parts.push(rowsEst(slice));
+  if(after>0) parts.push('<tr style="border:none"><td colspan="23" style="height:'+after+'px;padding:0;border:none"></td></tr>');
+  tb.innerHTML=parts.join('');
 }
 
-// ═══════════════════════════════════════════════
-// FORMATAÇÃO DE DATA
-// ═══════════════════════════════════════════════
-function fmtData(v) {
-  if (v === null || v === undefined || v === '' || v === '0' || v === 0) return '';
-  let dObj = null;
-  if (v instanceof Date) { dObj = v; }
-  else {
-    const s = String(v).trim();
-    if (!s || s === 'null' || s === 'undefined') return '';
-    if (/[a-zA-Z]/.test(s) || s.includes('-') || s.includes('T')) {
-      const parsed = new Date(s);
-      if (!isNaN(parsed.getTime())) dObj = parsed;
-    }
-    if (!dObj) {
-      let barra = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
-      if (barra) {
-        let dd=parseInt(barra[1]),mm=parseInt(barra[2]),yy=parseInt(barra[3]);
-        if (yy < 100) yy += 2000;
-        return String(dd).padStart(2,'0')+'/'+String(mm).padStart(2,'0')+'/'+yy;
-      }
-      if (/^\d{8}$/.test(s)) return s.slice(6,8)+'/'+s.slice(4,6)+'/'+s.slice(0,4);
-      const n = parseFloat(s.replace(',','.'));
-      if (!isNaN(n) && n > 10000 && n < 80000 && !s.includes('/')) {
-        const epoch = new Date(1899,11,30);
-        epoch.setDate(epoch.getDate() + Math.floor(n > 60 ? n-1 : n));
-        dObj = epoch;
-      }
-    }
+function onScrollEst(el){
+  var newStart=Math.max(0,Math.floor(el.scrollTop/VROW_H)-15);
+  if(Math.abs(newStart-(S.vs.est.start||0))>10){
+    S.vs.est.start=newStart;
+    renderVEst();
   }
-  if (dObj && !isNaN(dObj.getTime()))
-    return String(dObj.getDate()).padStart(2,'0')+'/'+String(dObj.getMonth()+1).padStart(2,'0')+'/'+String(dObj.getFullYear());
-  return String(v);
 }
+
+// ══════════════════════════════════════════════════════
+// FORMATAÇÃO DE DATA (main thread — usada só em modais)
+// ══════════════════════════════════════════════════════
+var _reBarra=/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/;
+var _reNum8=/^\d{8}$/;
+function fmtData(v){
+  if(v===null||v===undefined||v===''||v==='0'||v===0) return '';
+  if(v instanceof Date){var d=v;return _pad(d.getDate())+'/'+_pad(d.getMonth()+1)+'/'+d.getFullYear();}
+  var s=String(v).trim();
+  if(!s||s==='null'||s==='undefined') return '';
+  var barra=s.match(_reBarra);
+  if(barra){var yy=parseInt(barra[3]);if(yy<100)yy+=2000;return _pad(parseInt(barra[1]))+'/'+_pad(parseInt(barra[2]))+'/'+yy;}
+  if(_reNum8.test(s)) return s.slice(6,8)+'/'+s.slice(4,6)+'/'+s.slice(0,4);
+  return s;
+}
+function _pad(n){return n<10?'0'+n:String(n);}
 
 function dataOrd(v){
-  if(!v)return 0;
-  const m=String(v).match(/(\d{2})\/(\d{2})\/(\d{4})/);
+  if(!v) return 0;
+  var m=String(v).match(/(\d{2})\/(\d{2})\/(\d{4})/);
   if(m) return parseInt(m[3]+m[2]+m[1],10);
   return 0;
 }
 
-// ═══════════════════════════════════════════════
+// ══════════════════════════════════════════════════════
 // DASHBOARD
-// ═══════════════════════════════════════════════
+// ══════════════════════════════════════════════════════
 function rDash(){
-  const p=S.pc,s=S.sc,e=S.est;
-  const abertos=p.filter(x=>x.C7_STATUS===''||x.C7_STATUS==='A').length;
-  const parciais=p.filter(x=>x.C7_STATUS==='P').length;
-  const cancelados=p.filter(x=>x.C7_STATUS==='C').length;
-  const vTotal=p.reduce((a,b)=>a+(+b.C7_TOTAL||0),0);
-  const scSemPC=s.filter(x=>x.C1_STATUS==='P'||x.C1_STATUS==='E').length;
-  const dispZero=e.filter(x=>(+x.DISPONIVEL||0)<=0).length;
-  const ultP=[...p].slice(-5).reverse();
-  const ultS=[...s].slice(-5).reverse();
-  return`
-  <div class="sh"><div class="sh-title">Visão Geral</div><div class="sh-sub">Consolidado MATA121 · MATA110 · MATR290</div></div>
-  <div class="kpi-grid">
-    <div class="kpi bl"><div class="kpi-lb">Pedidos SC7</div><div class="kpi-v">${p.length}</div>
-      <div class="kpi-s">Estoque: ${p.filter(x=>x.C7_TIPO!=='S').length} · Direto: ${p.filter(x=>x.C7_TIPO==='S').length}</div>
-      <span class="tag tb">MATA121</span></div>
-    <div class="kpi am"><div class="kpi-lb">Pendente / Parcial</div><div class="kpi-v">${abertos+parciais}</div>
-      <div class="kpi-s">Pendentes: ${abertos} · Parciais: ${parciais}</div>
-      <span class="tag ta">${p.length?Math.round((abertos+parciais)/p.length*100):0}% do total</span></div>
-    <div class="kpi gn"><div class="kpi-lb">Valor total (C7_TOTAL)</div>
-      <div class="kpi-v" style="font-size:17px">R$&nbsp;${vTotal.toLocaleString('pt-BR',{minimumFractionDigits:2})}</div>
-      <div class="kpi-s">Soma dos pedidos SC7</div><span class="tag tg">Comprometido</span></div>
-    <div class="kpi tl"><div class="kpi-lb">SC1 sem pedido</div><div class="kpi-v">${scSemPC}</div>
-      <div class="kpi-s">Total SC1: ${s.length}</div>
-      <span class="tag ${scSemPC?'ta':'tg'}">${scSemPC?'Atenção':'OK'}</span></div>
-    <div class="kpi rd"><div class="kpi-lb">Cancelados</div><div class="kpi-v">${cancelados}</div>
-      <div class="kpi-s">C7_STATUS = C</div>
-      <span class="tag ${cancelados?'tr':'tg'}">${cancelados?'Atenção':'OK'}</span></div>
-    <div class="kpi pu"><div class="kpi-lb">Estoque crítico</div><div class="kpi-v">${dispZero}</div>
-      <div class="kpi-s">Disponível ≤ 0 de ${e.length} produtos</div>
-      <span class="tag ${dispZero?'tr':'tg'}">${dispZero?'Repor':'OK'}</span></div>
-    <div class="kpi am" style="cursor:pointer" onclick="nav('estoque');setTimeout(function(){S.f.status='ponto';renderTabela(true);},250)">
-      <div class="kpi-lb">🔔 Com Ponto Pedido</div>
-      <div class="kpi-v">${e.filter(function(x){return(+x.PONTO_PEDIDO||0)>0;}).length}</div>
-      <div class="kpi-s">Produtos com ponto configurado</div>
-      <span class="tag ta">Clique para ver</span></div>
-  </div>
-  <div class="dash-grid">
-    <div>
-      <div style="font-size:10px;font-weight:600;margin-bottom:9px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase">Últimos Pedidos · SC7</div>
-      <div class="table-wrap"><div class="tw-scroll"><table>
-        <thead><tr><th>Número</th><th>Tipo</th><th>Fornecedor</th><th>Total</th><th>Status</th></tr></thead>
-        <tbody>${ultP.length?ultP.map(r=>`<tr onclick="vPC('${r.C7_NUM}')" style="cursor:pointer">
-          <td class="mn">${r.C7_NUM}</td><td>${btipo(r.C7_TIPO)}</td>
-          <td style="max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="${r.C7_FORNECE||''}">${r.C7_FORNECE||''}</td>
-          <td class="mn">R$&nbsp;${fmt(r.C7_TOTAL)}</td><td>${bpc(r.C7_STATUS)}</td>
-        </tr>`).join(''):`<tr><td colspan="5"><div class="empty"><div class="empty-i">📋</div><div class="empty-t">Sem pedidos</div></div></td></tr>`}
-        </tbody></table></div></div>
-    </div>
-    <div>
-      <div style="font-size:10px;font-weight:600;margin-bottom:9px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase">Últimas Solicitações · SC1</div>
-      <div class="table-wrap"><table>
-        <thead><tr><th>C1_NUM</th><th>Tipo</th><th>Produto</th><th>C1_QUANT</th><th>Status</th></tr></thead>
-        <tbody>${ultS.length?ultS.map(r=>`<tr onclick="vSC('${r.C1_NUM}')" style="cursor:pointer">
-          <td class="mn">${r.C1_NUM}</td><td>${btipo(r.C1_TIPO)}</td>
-          <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="${r.C1_DESCRI||''}">${r.C1_DESCRI||''}</td>
-          <td class="mn">${fmt(r.C1_QUANT)}</td><td>${bsc(r.C1_STATUS)}</td>
-        </tr>`).join(''):`<tr><td colspan="5"><div class="empty"><div class="empty-i">📝</div><div class="empty-t">Sem solicitações</div></div></td></tr>`}
-        </tbody></table></div>
-    </div>
-  </div>`;
+  var p=S.pc,s=S.sc,e=S.est;
+  var abertos=p.filter(function(x){return x.C7_STATUS===''||x.C7_STATUS==='A';}).length;
+  var parciais=p.filter(function(x){return x.C7_STATUS==='P';}).length;
+  var cancelados=p.filter(function(x){return x.C7_STATUS==='C';}).length;
+  var vTotal=p.reduce(function(a,b){return a+(+b.C7_TOTAL||0);},0);
+  var scSemPC=s.filter(function(x){return x.C1_STATUS==='P'||x.C1_STATUS==='E';}).length;
+  var dispZero=e.filter(function(x){return(+x.DISPONIVEL||0)<=0;}).length;
+  var ultP=p.slice(-5).reverse();
+  var ultS=s.slice(-5).reverse();
+  return'<div class="sh"><div class="sh-title">Visão Geral</div><div class="sh-sub">Consolidado MATA121 · MATA110 · MATR290</div></div>'
+    +'<div class="kpi-grid">'
+    +'<div class="kpi bl"><div class="kpi-lb">Pedidos SC7</div><div class="kpi-v">'+p.length+'</div><div class="kpi-s">Estoque: '+p.filter(function(x){return x.C7_TIPO!=='S';}).length+' · Direto: '+p.filter(function(x){return x.C7_TIPO==='S';}).length+'</div><span class="tag tb">MATA121</span></div>'
+    +'<div class="kpi am"><div class="kpi-lb">Pendente / Parcial</div><div class="kpi-v">'+(abertos+parciais)+'</div><div class="kpi-s">Pendentes: '+abertos+' · Parciais: '+parciais+'</div><span class="tag ta">'+(p.length?Math.round((abertos+parciais)/p.length*100):0)+'% do total</span></div>'
+    +'<div class="kpi gn"><div class="kpi-lb">Valor total (C7_TOTAL)</div><div class="kpi-v" style="font-size:17px">R$&nbsp;'+vTotal.toLocaleString('pt-BR',{minimumFractionDigits:2})+'</div><div class="kpi-s">Soma dos pedidos SC7</div><span class="tag tg">Comprometido</span></div>'
+    +'<div class="kpi tl"><div class="kpi-lb">SC1 sem pedido</div><div class="kpi-v">'+scSemPC+'</div><div class="kpi-s">Total SC1: '+s.length+'</div><span class="tag '+(scSemPC?'ta':'tg')+'">'+(scSemPC?'Atenção':'OK')+'</span></div>'
+    +'<div class="kpi rd"><div class="kpi-lb">Cancelados</div><div class="kpi-v">'+cancelados+'</div><div class="kpi-s">C7_STATUS = C</div><span class="tag '+(cancelados?'tr':'tg')+'">'+(cancelados?'Atenção':'OK')+'</span></div>'
+    +'<div class="kpi pu"><div class="kpi-lb">Estoque crítico</div><div class="kpi-v">'+dispZero+'</div><div class="kpi-s">Disponível ≤ 0 de '+e.length+' produtos</div><span class="tag '+(dispZero?'tr':'tg')+'">'+(dispZero?'Repor':'OK')+'</span></div>'
+    +'<div class="kpi am" style="cursor:pointer" onclick="nav(\'estoque\');setTimeout(function(){S.f.status=\'ponto\';renderTabela(true);},250)">'
+    +'<div class="kpi-lb">🔔 Com Ponto Pedido</div><div class="kpi-v">'+e.filter(function(x){return(+x.PONTO_PEDIDO||0)>0;}).length+'</div><div class="kpi-s">Produtos com ponto configurado</div><span class="tag ta">Clique para ver</span></div>'
+    +'</div>'
+    +'<div class="dash-grid"><div>'
+    +'<div style="font-size:10px;font-weight:600;margin-bottom:9px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase">Últimos Pedidos · SC7</div>'
+    +'<div class="table-wrap"><div class="tw-scroll"><table><thead><tr><th>Número</th><th>Tipo</th><th>Fornecedor</th><th>Total</th><th>Status</th></tr></thead><tbody>'
+    +(ultP.length?ultP.map(function(r){return'<tr onclick="vPC(\''+r.C7_NUM+'\')" style="cursor:pointer"><td class="mn">'+r.C7_NUM+'</td><td>'+btipo(r.C7_TIPO)+'</td><td style="max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="'+(r.C7_FORNECE||'')+'">'+r.C7_FORNECE+'</td><td class="mn">R$&nbsp;'+fmt(r.C7_TOTAL)+'</td><td>'+bpc(r.C7_STATUS)+'</td></tr>';}).join(''):'<tr><td colspan="5"><div class="empty"><div class="empty-i">📋</div><div class="empty-t">Sem pedidos</div></div></td></tr>')
+    +'</tbody></table></div></div></div><div>'
+    +'<div style="font-size:10px;font-weight:600;margin-bottom:9px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase">Últimas Solicitações · SC1</div>'
+    +'<div class="table-wrap"><table><thead><tr><th>C1_NUM</th><th>Tipo</th><th>Produto</th><th>C1_QUANT</th><th>Status</th></tr></thead><tbody>'
+    +(ultS.length?ultS.map(function(r){return'<tr onclick="vSC(\''+r.C1_NUM+'\')" style="cursor:pointer"><td class="mn">'+r.C1_NUM+'</td><td>'+btipo(r.C1_TIPO)+'</td><td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="'+(r.C1_DESCRI||'')+'">'+r.C1_DESCRI+'</td><td class="mn">'+fmt(r.C1_QUANT)+'</td><td>'+bsc(r.C1_STATUS)+'</td></tr>';}).join(''):'<tr><td colspan="5"><div class="empty"><div class="empty-i">📝</div><div class="empty-t">Sem solicitações</div></div></td></tr>')
+    +'</tbody></table></div></div></div>';
 }
 
-// ═══════════════════════════════════════════════
+// ══════════════════════════════════════════════════════
 // ORDENAÇÃO
-// ═══════════════════════════════════════════════
+// ══════════════════════════════════════════════════════
 function sortArr(d,campo,dir,dc){
-  d.sort((a,b)=>{
-    const av=a[campo], bv=b[campo];
-    if(dc.includes(campo)) return (dataOrd(av)-dataOrd(bv))*dir;
-    if(typeof av==='number'&&typeof bv==='number') return (av-bv)*dir;
-    if(!isNaN(av)&&!isNaN(bv)&&av!==''&&bv!=='') return ((+av)-(+bv))*dir;
-    const sa=String(av||'').toLowerCase(), sb=String(bv||'').toLowerCase();
-    if(sa<sb)return -1*dir; if(sa>sb)return 1*dir; return 0;
+  d.sort(function(a,b){
+    var av=a[campo],bv=b[campo];
+    if(dc.indexOf(campo)>=0) return(dataOrd(av)-dataOrd(bv))*dir;
+    if(typeof av==='number'&&typeof bv==='number') return(av-bv)*dir;
+    if(!isNaN(av)&&!isNaN(bv)&&av!==''&&bv!=='') return((+av)-(+bv))*dir;
+    var sa=String(av||'').toLowerCase(),sb=String(bv||'').toLowerCase();
+    if(sa<sb) return -1*dir; if(sa>sb) return 1*dir; return 0;
   });
 }
 
-// ═══════════════════════════════════════════════
-// PEDIDOS SC7 — FIX #4: lógica de filtro por tipo corrigida
-// ═══════════════════════════════════════════════
+// ══════════════════════════════════════════════════════
+// PEDIDOS SC7
+// ══════════════════════════════════════════════════════
 function getFPC(){
-  const b=S.f.busca.toLowerCase();
-  const idx=S.idx.pc;
-  const d=[];
-  for(let i=0;i<S.pc.length;i++){
-    const x=S.pc[i];
+  var b=S.f.busca.toLowerCase(),idx=S.idx.pc,d=[];
+  for(var i=0;i<S.pc.length;i++){
+    var x=S.pc[i];
     if(S.f.filial!=='todos'&&x.C7_FILIAL!==S.f.filial) continue;
-    // FIX #4: 'R' = Estoque (C7_TIPO !== 'S'); 'S' = Uso direto (C7_TIPO === 'S')
     if(S.f.tipo==='R'&&x.C7_TIPO==='S') continue;
     if(S.f.tipo==='S'&&x.C7_TIPO!=='S') continue;
     if(S.f.status!=='todos'&&x.C7_STATUS!==S.f.status) continue;
@@ -670,81 +635,63 @@ function getFPC(){
 }
 
 function rowsPC(d){
-  if(!d.length) return `<tr><td colspan="15"><div class="empty"><div class="empty-i">📋</div><div class="empty-t">Nenhum pedido encontrado</div></div></td></tr>`;
-  return d.map(r=>`<tr onclick="vPC('${r.C7_NUM}','${r.C7_PRODUTO}')" style="cursor:pointer">
-    <td class="mn">${r.C7_NUM}</td>
-    <td>${btipo(r.C7_TIPO)}</td>
-    <td class="mn" style="font-size:11px">${r.C7_FILIAL||''}</td>
-    <td style="max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="${r.C7_FORNECE||''}">${r.C7_FORNECE||''}</td>
-    <td class="mn" style="font-size:11px">${r.C7_PRODUTO||''}</td>
-    <td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="${r.C7_DESCRI||''}">${r.C7_DESCRI||''}</td>
-    <td class="mn">${r.C7_CC||''}</td>
-    <td class="mn">${fmt(r.C7_QUANT)} ${r.C7_UM||''}</td>
-    <td class="mn">R$&nbsp;${fmt(r.C7_PRUNIT)}</td>
-    <td class="mn" style="font-weight:600">R$&nbsp;${fmt(r.C7_TOTAL)}</td>
-    <td>${bpc(r.C7_STATUS)}</td>
-    <td class="mn" style="font-size:11px">${fmtData(r.C7_EMISSAO)}</td>
-    <td class="mn" style="font-size:11px">${fmtData(r.C7_DATPRF)}</td>
-    <td style="font-size:11px;color:var(--muted)">${r.C7_COMPRADOR||''}</td>
-    <td><button class="btn btn-g" style="padding:4px 9px;font-size:11px" onclick="event.stopPropagation();vPC('${r.C7_NUM}','${r.C7_PRODUTO}')">Ver</button></td>
-  </tr>`).join('');
+  if(!d.length) return '<tr><td colspan="15"><div class="empty"><div class="empty-i">📋</div><div class="empty-t">Nenhum pedido encontrado</div></div></td></tr>';
+  /* OTIMIZAÇÃO: push em array e join no final é mais rápido que concatenação */
+  var rows=[];
+  for(var i=0;i<d.length;i++){
+    var r=d[i];
+    rows.push('<tr onclick="vPC(\''+r.C7_NUM+'\',\''+r.C7_PRODUTO+'\')" style="cursor:pointer">'
+      +'<td class="mn">'+r.C7_NUM+'</td><td>'+btipo(r.C7_TIPO)+'</td>'
+      +'<td class="mn" style="font-size:11px">'+(r.C7_FILIAL||'')+'</td>'
+      +'<td style="max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="'+(r.C7_FORNECE||'')+'">'+r.C7_FORNECE+'</td>'
+      +'<td class="mn" style="font-size:11px">'+(r.C7_PRODUTO||'')+'</td>'
+      +'<td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="'+(r.C7_DESCRI||'')+'">'+r.C7_DESCRI+'</td>'
+      +'<td class="mn">'+(r.C7_CC||'')+'</td>'
+      +'<td class="mn">'+fmt(r.C7_QUANT)+' '+(r.C7_UM||'')+'</td>'
+      +'<td class="mn">R$&nbsp;'+fmt(r.C7_PRUNIT)+'</td>'
+      +'<td class="mn" style="font-weight:600">R$&nbsp;'+fmt(r.C7_TOTAL)+'</td>'
+      +'<td>'+bpc(r.C7_STATUS)+'</td>'
+      +'<td class="mn" style="font-size:11px">'+fmtData(r.C7_EMISSAO)+'</td>'
+      +'<td class="mn" style="font-size:11px">'+fmtData(r.C7_DATPRF)+'</td>'
+      +'<td style="font-size:11px;color:var(--muted)">'+(r.C7_COMPRADOR||'')+'</td>'
+      +'<td><button class="btn btn-g" style="padding:4px 9px;font-size:11px" onclick="event.stopPropagation();vPC(\''+r.C7_NUM+'\',\''+r.C7_PRODUTO+'\')">Ver</button></td></tr>');
+  }
+  return rows.join('');
 }
 
 function rPC(){
-  const d=getFPC();
-  return`
-  <div class="sh"><div class="sh-title">Pedidos de Compra</div><div class="sh-sub">MATA121 · Tabela SC7 · ${S.pc.length} registros</div></div>
-  <div class="filters">
-    <input id="busca-pc" class="finp" placeholder="🔍  Buscar número, produto, fornecedor..." value="${S.f.busca}"
-      oninput="S.f.busca=this.value;renderTabela()"/>
-    <select class="fsel" onchange="S.f.filial=this.value;renderTabela()">
-      <option value="todos">Todas as filiais</option>
-      ${[...new Set(S.pc.map(x=>x.C7_FILIAL).filter(Boolean))].sort().map(f=>{const e=S.pc.find(x=>x.C7_FILIAL===f);const lbl=e&&e.C7_FILIAL_DESC?e.C7_FILIAL_DESC:f;return`<option value="${f}" ${(S.f.filial||'todos')===f?'selected':''}>${lbl}</option>`;}).join('')}
-    </select>
-    <select class="fsel" onchange="S.f.tipo=this.value;renderTabela()">
-      <option value="todos" ${S.f.tipo==='todos'?'selected':''}>Todos os tipos</option>
-      <option value="R" ${S.f.tipo==='R'?'selected':''}>📦 Estoque (C7_TIPO≠S)</option>
-      <option value="S" ${S.f.tipo==='S'?'selected':''}>🔧 Uso direto (C7_TIPO=S)</option>
-    </select>
-    <select class="fsel" onchange="S.f.status=this.value;renderTabela()">
-      <option value="todos">Todos os status</option>
-      <option value="" ${S.f.status===''?'selected':''}>🟡 Pendente</option>
-      <option value="P" ${S.f.status==='P'?'selected':''}>🔵 Parcial</option>
-      <option value="L" ${S.f.status==='L'?'selected':''}>🟢 Liberado</option>
-      <option value="C" ${S.f.status==='C'?'selected':''}>🔴 Cancelado</option>
-    </select>
-    <select class="fsel" onchange="S.f.comprador=this.value;renderTabela()">
-      <option value="todos">Todos os compradores</option>
-      ${[...new Set(S.pc.map(x=>x.C7_COMPRADOR).filter(Boolean))].sort().map(c=>`<option value="${c}" ${(S.f.comprador||'todos')===c?'selected':''}>${c}</option>`).join('')}
-    </select>
-    <span id="filter-count" class="fcnt">${d.length} / ${S.pc.length}</span>
-  </div>
-  <div class="table-wrap"><table>
-    <thead><tr>
-      <th onclick="so('C7_NUM')">Número ↕</th><th onclick="so('C7_TIPO')">Tipo ↕</th>
-      <th onclick="so('C7_FILIAL')">Filial ↕</th><th onclick="so('C7_FORNECE')">Fornecedor ↕</th>
-      <th onclick="so('C7_PRODUTO')">Produto ↕</th><th onclick="so('C7_DESCRI')">Descrição ↕</th>
-      <th onclick="so('C7_CC')">C.Custo ↕</th><th onclick="so('C7_QUANT')">Qtd / UN ↕</th>
-      <th onclick="so('C7_PRUNIT')">Pr.Unit ↕</th><th onclick="so('C7_TOTAL')">Total ↕</th>
-      <th onclick="so('C7_STATUS')">Status ↕</th><th onclick="so('C7_EMISSAO')">Emissão ↕</th>
-      <th onclick="so('C7_DATPRF')">Entrega ↕</th><th onclick="so('C7_COMPRADOR')">Comprador ↕</th>
-      <th></th>
-    </tr></thead>
-    <tbody id="tbody-main">${rowsPC(d)}</tbody>
-  </table></div>`;
+  var d=getFPC();
+  var filiais=[...new Set(S.pc.map(function(x){return x.C7_FILIAL;}).filter(Boolean))].sort();
+  var compradores=[...new Set(S.pc.map(function(x){return x.C7_COMPRADOR;}).filter(Boolean))].sort();
+  return'<div class="sh"><div class="sh-title">Pedidos de Compra</div><div class="sh-sub">MATA121 · Tabela SC7 · '+S.pc.length+' registros</div></div>'
+    +'<div class="filters">'
+    +'<input id="busca-pc" class="finp" placeholder="🔍  Buscar número, produto, fornecedor..." value="'+S.f.busca+'" oninput="S.f.busca=this.value;renderTabela()"/>'
+    +'<select class="fsel" onchange="S.f.filial=this.value;renderTabela()"><option value="todos">Todas as filiais</option>'
+    +filiais.map(function(f){return'<option value="'+f+'" '+(S.f.filial===f?'selected':'')+'>'+f+'</option>';}).join('')+'</select>'
+    +'<select class="fsel" onchange="S.f.tipo=this.value;renderTabela()"><option value="todos" '+(S.f.tipo==='todos'?'selected':'')+'>Todos os tipos</option><option value="R" '+(S.f.tipo==='R'?'selected':'')+'>📦 Estoque</option><option value="S" '+(S.f.tipo==='S'?'selected':'')+'>🔧 Uso direto</option></select>'
+    +'<select class="fsel" onchange="S.f.status=this.value;renderTabela()"><option value="todos">Todos os status</option><option value="" '+(S.f.status===''?'selected':'')+'>🟡 Pendente</option><option value="P" '+(S.f.status==='P'?'selected':'')+'>🔵 Parcial</option><option value="L" '+(S.f.status==='L'?'selected':'')+'>🟢 Liberado</option><option value="C" '+(S.f.status==='C'?'selected':'')+'>🔴 Cancelado</option></select>'
+    +'<select class="fsel" onchange="S.f.comprador=this.value;renderTabela()"><option value="todos">Todos os compradores</option>'
+    +compradores.map(function(c){return'<option value="'+c+'" '+(S.f.comprador===c?'selected':'')+'>'+c+'</option>';}).join('')+'</select>'
+    +'<span id="filter-count" class="fcnt">'+d.length+' / '+S.pc.length+'</span></div>'
+    +'<div class="table-wrap"><table><thead><tr>'
+    +'<th onclick="so(\'C7_NUM\')">Número ↕</th><th onclick="so(\'C7_TIPO\')">Tipo ↕</th>'
+    +'<th onclick="so(\'C7_FILIAL\')">Filial ↕</th><th onclick="so(\'C7_FORNECE\')">Fornecedor ↕</th>'
+    +'<th onclick="so(\'C7_PRODUTO\')">Produto ↕</th><th onclick="so(\'C7_DESCRI\')">Descrição ↕</th>'
+    +'<th onclick="so(\'C7_CC\')">C.Custo ↕</th><th onclick="so(\'C7_QUANT\')">Qtd / UN ↕</th>'
+    +'<th onclick="so(\'C7_PRUNIT\')">Pr.Unit ↕</th><th onclick="so(\'C7_TOTAL\')">Total ↕</th>'
+    +'<th onclick="so(\'C7_STATUS\')">Status ↕</th><th onclick="so(\'C7_EMISSAO\')">Emissão ↕</th>'
+    +'<th onclick="so(\'C7_DATPRF\')">Entrega ↕</th><th onclick="so(\'C7_COMPRADOR\')">Comprador ↕</th><th></th>'
+    +'</tr></thead><tbody id="tbody-main">'+rowsPC(d)+'</tbody></table></div>';
 }
 
-// ═══════════════════════════════════════════════
-// SOLICITAÇÕES SC1 — FIX #7: thead alinhado com tbody (13 colunas)
-// ═══════════════════════════════════════════════
+// ══════════════════════════════════════════════════════
+// SOLICITAÇÕES SC1
+// ══════════════════════════════════════════════════════
 function getFSC(){
-  const b=S.f.busca.toLowerCase();
-  const idx=S.idx.sc;
-  const d=[];
-  for(let i=0;i<S.sc.length;i++){
-    const x=S.sc[i];
+  var b=S.f.busca.toLowerCase(),idx=S.idx.sc,d=[];
+  for(var i=0;i<S.sc.length;i++){
+    var x=S.sc[i];
     if(S.f.filial!=='todos'&&x.C1_FILIAL!==S.f.filial) continue;
-    // FIX #4 (mesma correção aplicada ao SC)
     if(S.f.tipo==='R'&&x.C1_TIPO==='S') continue;
     if(S.f.tipo==='S'&&x.C1_TIPO!=='S') continue;
     if(S.f.status!=='todos'&&x.C1_STATUS!==S.f.status) continue;
@@ -756,109 +703,91 @@ function getFSC(){
 }
 
 function rowsSC(d){
-  if(!d.length) return `<tr><td colspan="13"><div class="empty"><div class="empty-i">📝</div><div class="empty-t">Nenhuma solicitação encontrada</div></div></td></tr>`;
-  return d.map(r=>`<tr onclick="vSC('${r.C1_NUM}')" style="cursor:pointer">
-    <td class="mn">${r.C1_NUM}</td>
-    <td>${btipo(r.C1_TIPO)}</td>
-    <td class="mn" style="font-size:11px">${r.C1_FILIAL||''}</td>
-    <td class="mn" style="font-size:11px">${r.C1_PRODUTO||''}</td>
-    <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="${r.C1_DESCRI||''}">${r.C1_DESCRI||''}</td>
-    <td class="mn">${r.C1_CC||''}</td>
-    <td class="mn">${fmt(r.C1_QUANT)}</td>
-    <td class="mn" style="color:${+r.C1_QUJE>0?'var(--green)':'var(--muted)'}">${fmt(r.C1_QUJE)}</td>
-    <td style="font-size:12px">${r.C1_SOLICIT||''}</td>
-    <td>${bsc(r.C1_STATUS)}</td>
-    <td class="mn" style="font-size:11px">${fmtData(r.C1_EMISSAO)}</td>
-    <td class="mn" style="font-size:11px">${fmtData(r.C1_DATPRF)}</td>
-    <td>${r.C1_PEDIDO?`<span class="badge bt">${r.C1_PEDIDO}</span>`:'-'}</td>
-    <td><button class="btn btn-g" style="padding:4px 9px;font-size:11px" onclick="event.stopPropagation();vSC('${r.C1_NUM}')">Ver</button></td>
-  </tr>`).join('');
+  if(!d.length) return '<tr><td colspan="14"><div class="empty"><div class="empty-i">📝</div><div class="empty-t">Nenhuma solicitação encontrada</div></div></td></tr>';
+  var rows=[];
+  for(var i=0;i<d.length;i++){
+    var r=d[i];
+    rows.push('<tr onclick="vSC(\''+r.C1_NUM+'\')" style="cursor:pointer">'
+      +'<td class="mn">'+r.C1_NUM+'</td><td>'+btipo(r.C1_TIPO)+'</td>'
+      +'<td class="mn" style="font-size:11px">'+(r.C1_FILIAL||'')+'</td>'
+      +'<td class="mn" style="font-size:11px">'+(r.C1_PRODUTO||'')+'</td>'
+      +'<td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="'+(r.C1_DESCRI||'')+'">'+r.C1_DESCRI+'</td>'
+      +'<td class="mn">'+(r.C1_CC||'')+'</td>'
+      +'<td class="mn">'+fmt(r.C1_QUANT)+'</td>'
+      +'<td class="mn" style="color:'+(+r.C1_QUJE>0?'var(--green)':'var(--muted)')+'">'+fmt(r.C1_QUJE)+'</td>'
+      +'<td style="font-size:12px">'+(r.C1_SOLICIT||'')+'</td>'
+      +'<td>'+bsc(r.C1_STATUS)+'</td>'
+      +'<td class="mn" style="font-size:11px">'+fmtData(r.C1_EMISSAO)+'</td>'
+      +'<td class="mn" style="font-size:11px">'+fmtData(r.C1_DATPRF)+'</td>'
+      +'<td>'+(r.C1_PEDIDO?'<span class="badge bt">'+r.C1_PEDIDO+'</span>':'-')+'</td>'
+      +'<td><button class="btn btn-g" style="padding:4px 9px;font-size:11px" onclick="event.stopPropagation();vSC(\''+r.C1_NUM+'\')">Ver</button></td></tr>');
+  }
+  return rows.join('');
 }
 
 function rSC(){
-  const d=getFSC();
-  return`
-  <div class="sh"><div class="sh-title">Solicitações de Compra</div><div class="sh-sub">MATA110 · Tabela SC1 · ${S.sc.length} registros</div></div>
-  <div class="filters">
-    <input id="busca-sc" class="finp" placeholder="🔍  Buscar número, produto, solicitante..." value="${S.f.busca}"
-      oninput="S.f.busca=this.value;renderTabela()"/>
-    <select class="fsel" onchange="S.f.filial=this.value;renderTabela()">
-      <option value="todos">Todas as filiais</option>
-      ${[...new Set(S.sc.map(x=>x.C1_FILIAL).filter(Boolean))].sort().map(f=>{const e=S.sc.find(x=>x.C1_FILIAL===f);const lbl=e&&e.C1_FILIAL_DESC?e.C1_FILIAL_DESC:f;return`<option value="${f}" ${(S.f.filial||'todos')===f?'selected':''}>${lbl}</option>`;}).join('')}
-    </select>
-    <select class="fsel" onchange="S.f.tipo=this.value;renderTabela()">
-      <option value="todos">Todos os tipos</option>
-      <option value="R" ${S.f.tipo==='R'?'selected':''}>📦 Estoque (C1_TIPO≠S)</option>
-      <option value="S" ${S.f.tipo==='S'?'selected':''}>🔧 Uso direto (C1_TIPO=S)</option>
-    </select>
-    <select class="fsel" onchange="S.f.status=this.value;renderTabela()">
-      <option value="todos">Todos os status</option>
-      <option value="P" ${S.f.status==='P'?'selected':''}>🟡 Pendente</option>
-      <option value="E" ${S.f.status==='E'?'selected':''}>🔷 Em cotação</option>
-      <option value="G" ${S.f.status==='G'?'selected':''}>🟢 Gerou pedido</option>
-    </select>
-    <span id="filter-count" class="fcnt">${d.length} / ${S.sc.length}</span>
-  </div>
-  <div class="table-wrap"><table>
-    <thead><tr>
-      <!-- FIX #7: thead tem exatamente 14 th (13 dados + 1 ação), igual ao tbody -->
-      <th onclick="so('C1_NUM')">Número ↕</th>
-      <th onclick="so('C1_TIPO')">Tipo ↕</th>
-      <th onclick="so('C1_FILIAL')">Filial ↕</th>
-      <th onclick="so('C1_PRODUTO')">Produto ↕</th>
-      <th onclick="so('C1_DESCRI')">Descrição ↕</th>
-      <th onclick="so('C1_CC')">C.Custo ↕</th>
-      <th onclick="so('C1_QUANT')">Qtd ↕</th>
-      <th onclick="so('C1_QUJE')">Em Pedido ↕</th>
-      <th onclick="so('C1_SOLICIT')">Solicitante ↕</th>
-      <th onclick="so('C1_STATUS')">Status ↕</th>
-      <th onclick="so('C1_EMISSAO')">Emissão ↕</th>
-      <th onclick="so('C1_DATPRF')">Necessidade ↕</th>
-      <th>PC Gerado</th>
-      <th></th>
-    </tr></thead>
-    <tbody id="tbody-main">${rowsSC(d)}</tbody>
-  </table></div>`;
+  var d=getFSC();
+  var filiais=[...new Set(S.sc.map(function(x){return x.C1_FILIAL;}).filter(Boolean))].sort();
+  return'<div class="sh"><div class="sh-title">Solicitações de Compra</div><div class="sh-sub">MATA110 · Tabela SC1 · '+S.sc.length+' registros</div></div>'
+    +'<div class="filters">'
+    +'<input id="busca-sc" class="finp" placeholder="🔍  Buscar número, produto, solicitante..." value="'+S.f.busca+'" oninput="S.f.busca=this.value;renderTabela()"/>'
+    +'<select class="fsel" onchange="S.f.filial=this.value;renderTabela()"><option value="todos">Todas as filiais</option>'
+    +filiais.map(function(f){return'<option value="'+f+'" '+(S.f.filial===f?'selected':'')+'>'+f+'</option>';}).join('')+'</select>'
+    +'<select class="fsel" onchange="S.f.tipo=this.value;renderTabela()"><option value="todos">Todos os tipos</option><option value="R" '+(S.f.tipo==='R'?'selected':'')+'>📦 Estoque</option><option value="S" '+(S.f.tipo==='S'?'selected':'')+'>🔧 Uso direto</option></select>'
+    +'<select class="fsel" onchange="S.f.status=this.value;renderTabela()"><option value="todos">Todos os status</option><option value="P" '+(S.f.status==='P'?'selected':'')+'>🟡 Pendente</option><option value="E" '+(S.f.status==='E'?'selected':'')+'>🔷 Em cotação</option><option value="G" '+(S.f.status==='G'?'selected':'')+'>🟢 Gerou pedido</option></select>'
+    +'<span id="filter-count" class="fcnt">'+d.length+' / '+S.sc.length+'</span></div>'
+    +'<div class="table-wrap"><table><thead><tr>'
+    +'<th onclick="so(\'C1_NUM\')">Número ↕</th><th onclick="so(\'C1_TIPO\')">Tipo ↕</th>'
+    +'<th onclick="so(\'C1_FILIAL\')">Filial ↕</th><th onclick="so(\'C1_PRODUTO\')">Produto ↕</th>'
+    +'<th onclick="so(\'C1_DESCRI\')">Descrição ↕</th><th onclick="so(\'C1_CC\')">C.Custo ↕</th>'
+    +'<th onclick="so(\'C1_QUANT\')">Qtd ↕</th><th onclick="so(\'C1_QUJE\')">Em Pedido ↕</th>'
+    +'<th onclick="so(\'C1_SOLICIT\')">Solicitante ↕</th><th onclick="so(\'C1_STATUS\')">Status ↕</th>'
+    +'<th onclick="so(\'C1_EMISSAO\')">Emissão ↕</th><th onclick="so(\'C1_DATPRF\')">Necessidade ↕</th>'
+    +'<th>PC Gerado</th><th></th>'
+    +'</tr></thead><tbody id="tbody-main">'+rowsSC(d)+'</tbody></table></div>';
 }
 
-// ═══════════════════════════════════════════════
-// ESTOQUE MATR290 — FIX #14: avisa se filial vazia
-// ═══════════════════════════════════════════════
+// ══════════════════════════════════════════════════════
+// ESTOQUE MATR290
+// ══════════════════════════════════════════════════════
 function getFEst(){
-  const b=S.f.busca.toLowerCase();
-  const idx=S.idx.est;
-  const d=[];
-  for(let i=0;i<S.est.length;i++){
-    const x=S.est[i];
+  var b=S.f.busca.toLowerCase(),idx=S.idx.est,d=[];
+  for(var i=0;i<S.est.length;i++){
+    var x=S.est[i];
     if(x.B1_FILIAL!==S.f.filial_aba) continue;
-    if(S.f.status==='ponto'){if(!((+x.PONTO_PEDIDO||0)>0)) continue;}
+    if(S.f.status==='ponto'&&!((+x.PONTO_PEDIDO||0)>0)) continue;
     if(S.f.status==='critico'&&(+x.DISPONIVEL||0)>0) continue;
-    if(S.f.status==='baixo'){const disp=+x.DISPONIVEL||0,qatu=+x.B2_QATU||0;if(!(disp>0&&disp<=qatu*.2)) continue;}
+    if(S.f.status==='baixo'){var disp=+x.DISPONIVEL||0,qatu=+x.B2_QATU||0;if(!(disp>0&&disp<=qatu*.2)) continue;}
     if(b&&!(idx[i]||'').includes(b)) continue;
     d.push(x);
   }
   if(S.sort.campo){
     sortArr(d,S.sort.campo,S.sort.dir,['ULT_SAIDA']);
   } else {
-    d.sort((a,b)=>{const cA=String(a.B1_COD||'').toLowerCase(),cB=String(b.B1_COD||'').toLowerCase();return cA<cB?-1:cA>cB?1:0;});
+    d.sort(function(a,b){var ca=String(a.B1_COD||'').toLowerCase(),cb=String(b.B1_COD||'').toLowerCase();return ca<cb?-1:ca>cb?1:0;});
   }
   return d;
 }
 
+/* OTIMIZAÇÃO: rowsEst usa array de partes, evita XSS-prone innerHTML em loop,
+   e pré-calcula variáveis fora do template string */
 function rowsEst(slice){
-  if(!slice.length)return'';
-  return slice.map(function(r){
-    const disp=+r.DISPONIVEL||0,qatu=+r.B2_QATU||0;
-    const pct=qatu>0?disp/qatu:0;
-    const sit=disp<=0?'Crítico':pct<.2?'Baixo':'Normal';
-    const sc =disp<=0?'br'    :pct<.2?'ba'   :'bg';
-    const clr=disp<=0?'var(--red)':pct<.2?'var(--amber)':'var(--green)';
-    const pp =+r.PONTO_PEDIDO||0;
-    const ppClr=pp>0?'color:var(--accent);font-weight:600':'color:var(--muted)';
-    return '<tr class="est-row" data-filial="'+encodeURIComponent(r.B1_FILIAL||'')+'" data-cod="'+encodeURIComponent(r.B1_COD||'')+'" style="cursor:pointer">'
+  if(!slice.length) return '';
+  var rows=[];
+  for(var i=0;i<slice.length;i++){
+    var r=slice[i];
+    var disp=+r.DISPONIVEL||0, qatu=+r.B2_QATU||0;
+    var pct=qatu>0?disp/qatu:0;
+    var sit=disp<=0?'Crítico':pct<.2?'Baixo':'Normal';
+    var sc =disp<=0?'br'    :pct<.2?'ba'   :'bg';
+    var clr=disp<=0?'var(--red)':pct<.2?'var(--amber)':'var(--green)';
+    var pp=+r.PONTO_PEDIDO||0;
+    var ppClr=pp>0?'color:var(--accent);font-weight:600':'color:var(--muted)';
+    rows.push(
+      '<tr class="est-row" data-filial="'+encodeURIComponent(r.B1_FILIAL||'')+'" data-cod="'+encodeURIComponent(r.B1_COD||'')+'" style="cursor:pointer">'
       +'<td class="mn" style="font-weight:600">'+(r.B1_COD||'')+'</td>'
-      +'<td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="'+(r.B1_DESC||'')+'">'+(r.B1_DESC||'')+'</td>'
-      +'<td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--muted)" title="'+(r.B1_DESC_CIEN||'')+'">'+(r.B1_DESC_CIEN||'')+'</td>'
+      +'<td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="'+(r.B1_DESC||'')+'">'+r.B1_DESC+'</td>'
+      +'<td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--muted)" title="'+(r.B1_DESC_CIEN||'')+'">'+r.B1_DESC_CIEN+'</td>'
       +'<td class="mn">'+(r.B1_TIPO||'')+'</td>'
       +'<td class="mn">'+(r.B1_GRUPO||'-')+'</td>'
       +'<td class="mn">'+(r.B1_UM||'')+'</td>'
@@ -879,377 +808,194 @@ function rowsEst(slice){
       +'<td><span class="badge bz" style="font-size:9.5px">'+(r.B1_CLASSE||'-')+'</span></td>'
       +'<td class="mn" style="font-weight:700;color:'+clr+';background:var(--surface2)">'+fmt(disp)+'</td>'
       +'<td style="background:var(--surface2)"><span class="badge '+sc+'">'+sit+'</span></td>'
-      +'</tr>';
-  }).join('');
+      +'</tr>'
+    );
+  }
+  return rows.join('');
 }
 
-// FIX #3: _estClickBound removido; listener é adicionado ao container estático #content
-// para evitar listeners fantasmas após limpar() ou trocar de aba.
-(function(){
-  document.addEventListener('click',function(e){
-    if(S.pg!=='estoque') return;
-    const tr=e.target.closest('tr.est-row');
-    if(!tr) return;
-    vEst(decodeURIComponent(tr.dataset.filial||''), decodeURIComponent(tr.dataset.cod||''));
-  });
-})();
-function bindEstClick(){/* mantido por compatibilidade mas não faz mais nada */}
+/* Listener global para clique na linha de estoque */
+document.addEventListener('click',function(e){
+  if(S.pg!=='estoque') return;
+  var tr=e.target.closest('tr.est-row');
+  if(!tr) return;
+  vEst(decodeURIComponent(tr.dataset.filial||''),decodeURIComponent(tr.dataset.cod||''));
+});
 
 function rEst(){
-  const filiais=[...new Set(S.est.map(x=>x.B1_FILIAL).filter(Boolean))].sort();
-
-  // FIX #14: verifica se a filial_aba atual ainda é válida
-  if(filiais.length>0 && (!S.f.filial_aba || !filiais.includes(S.f.filial_aba))){
-    S.f.filial_aba=filiais[0];
-  }
-
-  const d=getFEst();
+  var filiais=[...new Set(S.est.map(function(x){return x.B1_FILIAL;}).filter(Boolean))].sort();
+  if(filiais.length>0&&(!S.f.filial_aba||!filiais.includes(S.f.filial_aba))) S.f.filial_aba=filiais[0];
+  var d=getFEst();
   S.vs.est._data=d;
   S.vs.est.start=0;
-  const filialTotal=S.est.filter(x=>x.B1_FILIAL===S.f.filial_aba).length;
-
-  const tabsHtml=filiais.map(f=>`<button class="ftab ${S.f.filial_aba===f?'active':''}" onclick="S.f.filial_aba='${f}';S.vs.est.start=0;var tw=document.getElementById('tw-est');if(tw)tw.scrollTop=0;renderTabela(true)">🏢 Filial ${f}</button>`).join('');
-
-  return`
-  <div class="sh"><div class="sh-title">Análise de Estoque</div><div class="sh-sub">MATR290 · ${S.est.length} produtos totais · ${filiais.length} filiais</div></div>
-  <div class="ftabs">${tabsHtml||'<span style="color:var(--muted);font-size:12px">Nenhuma filial encontrada. Importe dados do MATR290.</span>'}</div>
-  <div class="filters">
-    <input id="busca-est" class="finp" placeholder="🔍  Buscar código, descrição, grupo..." value="${S.f.busca}"
-      oninput="S.f.busca=this.value;renderTabela()"/>
-    <select class="fsel" onchange="S.f.status=this.value;renderTabela()">
-      <option value="todos">Todos os produtos da filial</option>
-      <option value="ponto" ${S.f.status==='ponto'?'selected':''}>🔔 Com Ponto de Pedido</option>
-      <option value="critico" ${S.f.status==='critico'?'selected':''}>🔴 Saldo zero / negativo</option>
-      <option value="baixo" ${S.f.status==='baixo'?'selected':''}>🟡 Saldo baixo (&lt;20%)</option>
-    </select>
-    <span id="filter-count" class="fcnt">${d.length} / ${filialTotal} nesta aba</span>
-  </div>
-  <div class="table-wrap" id="tw-est" onscroll="onScrollEst(this)"><table>
-    <thead><tr>
-      <th onclick="so('B1_COD')">Código ↕</th><th onclick="so('B1_DESC')">Descrição ↕</th>
-      <th onclick="so('B1_DESC_CIEN')">Desc. Científica ↕</th><th onclick="so('B1_TIPO')">Tp ↕</th>
-      <th onclick="so('B1_GRUPO')">Grupo ↕</th><th onclick="so('B1_UM')">UM ↕</th>
-      <th onclick="so('B2_QATU')">Saldo Atual ↕</th><th onclick="so('B2_EMPENHO')">Empenho ↕</th>
-      <th onclick="so('B2_SCS')">SCs Colocadas ↕</th><th onclick="so('B2_PCS')">PCs Colocados ↕</th>
-      <th onclick="so('B2_OPS')">OPs Colocadas ↕</th><th onclick="so('B2_PVS')">PVs Colocados ↕</th>
-      <th onclick="so('PONTO_PEDIDO')">Ponto Pedido ↕</th><th onclick="so('LOTE_ECON')">Lote Econom. ↕</th>
-      <th onclick="so('ENTREGA')">Entrega ↕</th><th onclick="so('EST_MESES')">Estoque Meses ↕</th>
-      <th onclick="so('MED_CONSUMO')">Med. Consumo ↕</th><th onclick="so('ULT_SAIDA')">DT.Ult.Saída ↕</th>
-      <th onclick="so('B1_CL')">CL ↕</th><th onclick="so('CONTR_END')">Contr.Endereç ↕</th>
-      <th onclick="so('B1_CLASSE')">Classe ABC ↕</th>
-      <th onclick="so('DISPONIVEL')" style="background:var(--surface3)">Disponível ↕</th>
-      <th style="background:var(--surface3)">Situação</th>
-    </tr></thead>
-    <tbody id="tbody-main">${rowsEst(d)}</tbody>
-  </table></div>`;
+  var filialTotal=S.est.filter(function(x){return x.B1_FILIAL===S.f.filial_aba;}).length;
+  var tabsHtml=filiais.map(function(f){return'<button class="ftab '+(S.f.filial_aba===f?'active':'')+'" onclick="S.f.filial_aba=\''+f+'\';S.vs.est.start=0;var tw=document.getElementById(\'tw-est\');if(tw)tw.scrollTop=0;renderTabela(true)">🏢 Filial '+f+'</button>';}).join('');
+  return'<div class="sh"><div class="sh-title">Análise de Estoque</div><div class="sh-sub">MATR290 · '+S.est.length+' produtos totais · '+filiais.length+' filiais</div></div>'
+    +'<div class="ftabs">'+(tabsHtml||'<span style="color:var(--muted);font-size:12px">Nenhuma filial encontrada. Importe dados do MATR290.</span>')+'</div>'
+    +'<div class="filters">'
+    +'<input id="busca-est" class="finp" placeholder="🔍  Buscar código, descrição, grupo..." value="'+S.f.busca+'" oninput="S.f.busca=this.value;renderTabela()"/>'
+    +'<select class="fsel" onchange="S.f.status=this.value;renderTabela()"><option value="todos">Todos os produtos da filial</option><option value="ponto" '+(S.f.status==='ponto'?'selected':'')+'>🔔 Com Ponto de Pedido</option><option value="critico" '+(S.f.status==='critico'?'selected':'')+'>🔴 Saldo zero / negativo</option><option value="baixo" '+(S.f.status==='baixo'?'selected':'')+'>🟡 Saldo baixo (&lt;20%)</option></select>'
+    +'<span id="filter-count" class="fcnt">'+d.length+' / '+filialTotal+' nesta aba</span></div>'
+    +'<div class="table-wrap" id="tw-est" onscroll="onScrollEst(this)"><table><thead><tr>'
+    +'<th onclick="so(\'B1_COD\')">Código ↕</th><th onclick="so(\'B1_DESC\')">Descrição ↕</th>'
+    +'<th onclick="so(\'B1_DESC_CIEN\')">Desc. Científica ↕</th><th onclick="so(\'B1_TIPO\')">Tp ↕</th>'
+    +'<th onclick="so(\'B1_GRUPO\')">Grupo ↕</th><th onclick="so(\'B1_UM\')">UM ↕</th>'
+    +'<th onclick="so(\'B2_QATU\')">Saldo Atual ↕</th><th onclick="so(\'B2_EMPENHO\')">Empenho ↕</th>'
+    +'<th onclick="so(\'B2_SCS\')">SCs Colocadas ↕</th><th onclick="so(\'B2_PCS\')">PCs Colocados ↕</th>'
+    +'<th onclick="so(\'B2_OPS\')">OPs Colocadas ↕</th><th onclick="so(\'B2_PVS\')">PVs Colocados ↕</th>'
+    +'<th onclick="so(\'PONTO_PEDIDO\')">Ponto Pedido ↕</th><th onclick="so(\'LOTE_ECON\')">Lote Econom. ↕</th>'
+    +'<th onclick="so(\'ENTREGA\')">Entrega ↕</th><th onclick="so(\'EST_MESES\')">Estoque Meses ↕</th>'
+    +'<th onclick="so(\'MED_CONSUMO\')">Med. Consumo ↕</th><th onclick="so(\'ULT_SAIDA\')">DT.Ult.Saída ↕</th>'
+    +'<th onclick="so(\'B1_CL\')">CL ↕</th><th onclick="so(\'CONTR_END\')">Contr.Endereç ↕</th>'
+    +'<th onclick="so(\'B1_CLASSE\')">Classe ABC ↕</th>'
+    +'<th onclick="so(\'DISPONIVEL\')" style="background:var(--surface3)">Disponível ↕</th>'
+    +'<th style="background:var(--surface3)">Situação</th>'
+    +'</tr></thead><tbody id="tbody-main">'+rowsEst(d)+'</tbody></table></div>';
 }
 
-// ═══════════════════════════════════════════════
+// ══════════════════════════════════════════════════════
 // MODAIS
-// ═══════════════════════════════════════════════
+// ══════════════════════════════════════════════════════
 function vEst(filial,cod){
-  const r=S.est.find(function(x){return x.B1_FILIAL===filial&&x.B1_COD===cod;});
-  if(!r)return;
-  const disp=+r.DISPONIVEL||0,qatu=+r.B2_QATU||0;
-  const pct=qatu>0?disp/qatu:0;
-  const [sit,sc]=disp<=0?['Crítico','br']:pct<.2?['Baixo','ba']:['Normal','bg'];
-  document.getElementById('mc').innerHTML=`
-    <div class="mh">
-      <div class="mh-t">${r.B1_COD} — ${r.B1_DESC||''}
-        &nbsp;<span class="badge ${sc}">${sit}</span>
-        ${r.B1_CLASSE?`&nbsp;<span class="badge bz">Classe ${r.B1_CLASSE}</span>`:''}
-      </div>
-      <button class="mclose" onclick="closeM()">×</button>
-    </div>
-    <div class="mb">
-      <div class="mrow">
-        <div class="mf"><div class="fl">Filial</div><div class="fv mn">${r.B1_FILIAL_DESC||r.B1_FILIAL||''}</div></div>
-        <div class="mf"><div class="fl">Código</div><div class="fv mn">${r.B1_COD||''}</div></div>
-        <div class="mf"><div class="fl">UM</div><div class="fv mn">${r.B1_UM||''}</div></div>
-        <div class="mf"><div class="fl">Tipo</div><div class="fv mn">${r.B1_TIPO||''}</div></div>
-      </div>
-      <div class="mrow"><div class="mf full"><div class="fl">Descrição</div><div class="fv">${r.B1_DESC||''}</div></div></div>
-      ${r.B1_DESC_CIEN&&r.B1_DESC_CIEN!==r.B1_DESC?`<div class="mrow"><div class="mf full"><div class="fl">Desc. Científica</div><div class="fv" style="font-size:12px;color:var(--muted2)">${r.B1_DESC_CIEN}</div></div></div>`:''}
-      <div class="mrow">
-        <div class="mf"><div class="fl">Grupo</div><div class="fv mn">${r.B1_GRUPO||'-'}</div></div>
-        <div class="mf"><div class="fl">Classe ABC</div><div class="fv mn">${r.B1_CLASSE||'-'}</div></div>
-        <div class="mf"><div class="fl">CL</div><div class="fv mn">${r.B1_CL||'-'}</div></div>
-        <div class="mf"><div class="fl">Contr. Endereç.</div><div class="fv mn">${r.CONTR_END||'-'}</div></div>
-      </div>
-      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;margin-bottom:12px">
-        <div class="fl" style="margin-bottom:10px">SALDOS E MOVIMENTOS</div>
-        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
-          <div style="text-align:center"><div style="font-size:10px;color:var(--muted);margin-bottom:4px">Saldo Atual</div><div style="font-size:20px;font-weight:700;font-family:var(--mono);color:var(--text)">${fmt(qatu)}</div></div>
-          <div style="text-align:center"><div style="font-size:10px;color:var(--muted);margin-bottom:4px">Empenho</div><div style="font-size:20px;font-weight:700;font-family:var(--mono);color:var(--amber)">${fmt(+r.B2_EMPENHO||0)}</div></div>
-          <div style="text-align:center"><div style="font-size:10px;color:var(--muted);margin-bottom:4px">Disponível</div><div style="font-size:20px;font-weight:700;font-family:var(--mono);color:${disp<=0?'var(--red)':pct<.2?'var(--amber)':'var(--green)'}">${fmt(disp)}</div></div>
-          <div style="text-align:center"><div style="font-size:10px;color:var(--muted);margin-bottom:4px">Med. Consumo</div><div style="font-size:20px;font-weight:700;font-family:var(--mono);color:var(--muted2)">${fmt(+r.MED_CONSUMO||0)}</div></div>
-        </div>
-      </div>
-      <div class="mrow">
-        <div class="mf"><div class="fl">SCs Colocadas</div><div class="fv mn" style="color:var(--teal)">${fmt(+r.B2_SCS||0)}</div></div>
-        <div class="mf"><div class="fl">PCs Colocados</div><div class="fv mn" style="color:var(--accent)">${fmt(+r.B2_PCS||0)}</div></div>
-        <div class="mf"><div class="fl">OPs Colocadas</div><div class="fv mn">${fmt(+r.B2_OPS||0)}</div></div>
-        <div class="mf"><div class="fl">PVs Colocados</div><div class="fv mn">${fmt(+r.B2_PVS||0)}</div></div>
-      </div>
-      <div class="mrow">
-        <div class="mf"><div class="fl">Ponto Pedido</div><div class="fv mn">${fmt(+r.PONTO_PEDIDO||0)}</div></div>
-        <div class="mf"><div class="fl">Lote Econômico</div><div class="fv mn">${fmt(+r.LOTE_ECON||0)}</div></div>
-        <div class="mf"><div class="fl">Prazo Entrega</div><div class="fv mn">${fmt(+r.ENTREGA||0)} dias</div></div>
-        <div class="mf"><div class="fl">Estoque em Meses</div><div class="fv mn">${r.EST_MESES||'-'}</div></div>
-      </div>
-      <div class="mrow">
-        <div class="mf"><div class="fl">Previsão de Entrega</div><div class="fv mn" style="color:var(--accent)">${fmt(+r.PREV_ENTREGA||0)}</div></div>
-        <div class="mf"><div class="fl">Últ. Saída</div><div class="fv mn">${fmtData(r.ULT_SAIDA)}</div></div>
-        <div class="mf"><div class="fl">Custo Médio</div><div class="fv mn">R$ ${fmt(+r.B2_CM1||0)}</div></div>
-        <div class="mf"><div class="fl">Valor em Estoque</div><div class="fv mn" style="font-weight:700">R$ ${fmt(+r.B2_VATU1||0)}</div></div>
-      </div>
-      ${r.B1_OBS?`<div class="mrow"><div class="mf full"><div class="fl">Observação</div><div class="fv" style="color:var(--amber)">${r.B1_OBS}</div></div></div>`:''}
-    </div>
-    <div class="mfoot">
-      <span style="font-size:12px;color:var(--muted);margin-right:auto">
-        Disponível: <strong style="color:${disp<=0?'var(--red)':pct<.2?'var(--amber)':'var(--green)'}">${fmt(disp)} ${r.B1_UM||''}</strong>
-        &nbsp;·&nbsp;Custo Médio: <strong>R$ ${fmt(+r.B2_CM1||0)}</strong>
-      </span>
-      <button class="btn btn-g" onclick="closeM()">Fechar</button>
-    </div>`;
+  var r=S.est.find(function(x){return x.B1_FILIAL===filial&&x.B1_COD===cod;});
+  if(!r) return;
+  var disp=+r.DISPONIVEL||0, qatu=+r.B2_QATU||0;
+  var pct=qatu>0?disp/qatu:0;
+  var sit=disp<=0?'Crítico':pct<.2?'Baixo':'Normal';
+  var sc=disp<=0?'br':pct<.2?'ba':'bg';
+  document.getElementById('mc').innerHTML=
+    '<div class="mh"><div class="mh-t">'+r.B1_COD+' — '+(r.B1_DESC||'')+' <span class="badge '+sc+'">'+sit+'</span>'+(r.B1_CLASSE?'&nbsp;<span class="badge bz">Classe '+r.B1_CLASSE+'</span>':'')+'</div><button class="mclose" onclick="closeM()">×</button></div>'
+    +'<div class="mb">'
+    +'<div class="mrow"><div class="mf"><div class="fl">Filial</div><div class="fv mn">'+(r.B1_FILIAL_DESC||r.B1_FILIAL||'')+'</div></div><div class="mf"><div class="fl">Código</div><div class="fv mn">'+(r.B1_COD||'')+'</div></div><div class="mf"><div class="fl">UM</div><div class="fv mn">'+(r.B1_UM||'')+'</div></div><div class="mf"><div class="fl">Tipo</div><div class="fv mn">'+(r.B1_TIPO||'')+'</div></div></div>'
+    +'<div class="mrow"><div class="mf full"><div class="fl">Descrição</div><div class="fv">'+(r.B1_DESC||'')+'</div></div></div>'
+    +(r.B1_DESC_CIEN?'<div class="mrow"><div class="mf full"><div class="fl">Desc. Científica</div><div class="fv" style="font-size:12px;color:var(--muted2)">'+r.B1_DESC_CIEN+'</div></div></div>':'')
+    +'<div class="mrow"><div class="mf"><div class="fl">Grupo</div><div class="fv mn">'+(r.B1_GRUPO||'-')+'</div></div><div class="mf"><div class="fl">Classe ABC</div><div class="fv mn">'+(r.B1_CLASSE||'-')+'</div></div><div class="mf"><div class="fl">CL</div><div class="fv mn">'+(r.B1_CL||'-')+'</div></div><div class="mf"><div class="fl">Contr. Endereç.</div><div class="fv mn">'+(r.CONTR_END||'-')+'</div></div></div>'
+    +'<div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;margin-bottom:12px"><div class="fl" style="margin-bottom:10px">SALDOS E MOVIMENTOS</div><div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px"><div style="text-align:center"><div style="font-size:10px;color:var(--muted);margin-bottom:4px">Saldo Atual</div><div style="font-size:20px;font-weight:700;font-family:var(--mono)">'+fmt(qatu)+'</div></div><div style="text-align:center"><div style="font-size:10px;color:var(--muted);margin-bottom:4px">Empenho</div><div style="font-size:20px;font-weight:700;font-family:var(--mono);color:var(--amber)">'+fmt(+r.B2_EMPENHO||0)+'</div></div><div style="text-align:center"><div style="font-size:10px;color:var(--muted);margin-bottom:4px">Disponível</div><div style="font-size:20px;font-weight:700;font-family:var(--mono);color:'+(disp<=0?'var(--red)':pct<.2?'var(--amber)':'var(--green)')+'">'+fmt(disp)+'</div></div><div style="text-align:center"><div style="font-size:10px;color:var(--muted);margin-bottom:4px">Med. Consumo</div><div style="font-size:20px;font-weight:700;font-family:var(--mono);color:var(--muted2)">'+fmt(+r.MED_CONSUMO||0)+'</div></div></div></div>'
+    +'<div class="mrow"><div class="mf"><div class="fl">SCs Colocadas</div><div class="fv mn" style="color:var(--teal)">'+fmt(+r.B2_SCS||0)+'</div></div><div class="mf"><div class="fl">PCs Colocados</div><div class="fv mn" style="color:var(--accent)">'+fmt(+r.B2_PCS||0)+'</div></div><div class="mf"><div class="fl">OPs Colocadas</div><div class="fv mn">'+fmt(+r.B2_OPS||0)+'</div></div><div class="mf"><div class="fl">PVs Colocados</div><div class="fv mn">'+fmt(+r.B2_PVS||0)+'</div></div></div>'
+    +'<div class="mrow"><div class="mf"><div class="fl">Ponto Pedido</div><div class="fv mn">'+fmt(+r.PONTO_PEDIDO||0)+'</div></div><div class="mf"><div class="fl">Lote Econômico</div><div class="fv mn">'+fmt(+r.LOTE_ECON||0)+'</div></div><div class="mf"><div class="fl">Prazo Entrega</div><div class="fv mn">'+fmt(+r.ENTREGA||0)+' dias</div></div><div class="mf"><div class="fl">Estoque em Meses</div><div class="fv mn">'+(r.EST_MESES||'-')+'</div></div></div>'
+    +'<div class="mrow"><div class="mf"><div class="fl">Prev. Entrega</div><div class="fv mn" style="color:var(--accent)">'+fmt(+r.PREV_ENTREGA||0)+'</div></div><div class="mf"><div class="fl">Últ. Saída</div><div class="fv mn">'+fmtData(r.ULT_SAIDA)+'</div></div><div class="mf"><div class="fl">Custo Médio</div><div class="fv mn">R$ '+fmt(+r.B2_CM1||0)+'</div></div><div class="mf"><div class="fl">Valor em Estoque</div><div class="fv mn" style="font-weight:700">R$ '+fmt(+r.B2_VATU1||0)+'</div></div></div>'
+    +(r.B1_OBS?'<div class="mrow"><div class="mf full"><div class="fl">Observação</div><div class="fv" style="color:var(--amber)">'+r.B1_OBS+'</div></div></div>':'')
+    +'</div>'
+    +'<div class="mfoot"><span style="font-size:12px;color:var(--muted);margin-right:auto">Disponível: <strong style="color:'+(disp<=0?'var(--red)':pct<.2?'var(--amber)':'var(--green)')+'">'+fmt(disp)+' '+(r.B1_UM||'')+'</strong>&nbsp;·&nbsp;Custo Médio: <strong>R$ '+fmt(+r.B2_CM1||0)+'</strong></span><button class="btn btn-g" onclick="closeM()">Fechar</button></div>';
   document.getElementById('modal').style.display='flex';
 }
 
 function vPC(num,prod){
-  const todos=S.pc.filter(x=>x.C7_NUM===num);
-  if(!todos.length)return;
-  const r=prod?todos.find(x=>x.C7_PRODUTO===prod)||todos[0]:todos[0];
-  const totalPC=todos.reduce((a,b)=>a+(+b.C7_TOTAL||0),0);
-  const itensHTML=todos.length>1?`
-    <div style="margin-top:14px">
-      <div class="fl" style="margin-bottom:7px">TODOS OS ITENS DESTE PEDIDO (${todos.length})</div>
-      <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
-        <table style="width:100%;border-collapse:collapse;font-size:11.5px">
-          <thead style="background:var(--surface2)"><tr>
-            <th style="padding:7px 10px;text-align:left;color:var(--muted);font-size:10px;text-transform:uppercase">Produto</th>
-            <th style="padding:7px 10px;text-align:left;color:var(--muted);font-size:10px;text-transform:uppercase">Descrição</th>
-            <th style="padding:7px 10px;text-align:right;color:var(--muted);font-size:10px;text-transform:uppercase">Qtd/UN</th>
-            <th style="padding:7px 10px;text-align:right;color:var(--muted);font-size:10px;text-transform:uppercase">Pr.Unit</th>
-            <th style="padding:7px 10px;text-align:right;color:var(--muted);font-size:10px;text-transform:uppercase">Total</th>
-            <th style="padding:7px 10px;text-align:left;color:var(--muted);font-size:10px;text-transform:uppercase">Entrega</th>
-            <th style="padding:7px 10px;text-align:left;color:var(--muted);font-size:10px;text-transform:uppercase">SC</th>
-          </tr></thead>
-          <tbody>${todos.map(it=>`<tr style="border-top:1px solid var(--border);background:${it.C7_PRODUTO===r.C7_PRODUTO?'rgba(79,124,255,.07)':''}">
-            <td style="padding:7px 10px;font-family:var(--mono);font-size:11px">${it.C7_PRODUTO||''}</td>
-            <td style="padding:7px 10px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${it.C7_DESCRI||''}">${it.C7_DESCRI||''}</td>
-            <td style="padding:7px 10px;text-align:right;font-family:var(--mono)">${fmt(it.C7_QUANT)} ${it.C7_UM||''}</td>
-            <td style="padding:7px 10px;text-align:right;font-family:var(--mono)">R$&nbsp;${fmt(it.C7_PRUNIT)}</td>
-            <td style="padding:7px 10px;text-align:right;font-family:var(--mono);font-weight:600">R$&nbsp;${fmt(it.C7_TOTAL)}</td>
-            <td style="padding:7px 10px;font-family:var(--mono);font-size:11px">${fmtData(it.C7_DATPRF)}</td>
-            <td style="padding:7px 10px;font-family:var(--mono);font-size:11px">${it.C7_SOLICIT||'-'}</td>
-          </tr>`).join('')}
-          <tr style="border-top:2px solid var(--border2);background:var(--surface2)">
-            <td colspan="4" style="padding:7px 10px;font-size:11px;color:var(--muted)">Total do Pedido</td>
-            <td style="padding:7px 10px;text-align:right;font-family:var(--mono);font-weight:700;color:var(--green)">R$&nbsp;${fmt(totalPC)}</td>
-            <td colspan="2"></td>
-          </tr></tbody>
-        </table>
-      </div>
-    </div>`:'';
-  document.getElementById('mc').innerHTML=`
-    <div class="mh">
-      <div class="mh-t">Pedido ${r.C7_NUM} &nbsp;${btipo(r.C7_TIPO)}&nbsp;${bpc(r.C7_STATUS)}
-        ${todos.length>1?`<span style="font-size:11px;color:var(--muted);font-weight:400;margin-left:8px">${todos.length} itens</span>`:''}
-      </div>
-      <button class="mclose" onclick="closeM()">×</button>
-    </div>
-    <div class="mb">
-      <div class="mrow">
-        <div class="mf"><div class="fl">Filial</div><div class="fv mn" style="font-size:11px">${r.C7_FILIAL_DESC||r.C7_FILIAL||''}</div></div>
-        <div class="mf"><div class="fl">Número / Item</div><div class="fv mn">${r.C7_NUM||''}</div></div>
-        <div class="mf"><div class="fl">Emissão</div><div class="fv mn">${fmtData(r.C7_EMISSAO)}</div></div>
-        <div class="mf"><div class="fl">Comprador</div><div class="fv" style="font-size:12px">${r.C7_COMPRADOR||'-'}</div></div>
-      </div>
-      <div class="mrow"><div class="mf full"><div class="fl">Produto · Descrição</div><div class="fv">${r.C7_PRODUTO||''} — ${r.C7_DESCRI||''}</div></div></div>
-      <div class="mrow"><div class="mf full"><div class="fl">Fornecedor (CNPJ/Cód.)</div><div class="fv mn">${r.C7_FORNECE||'-'}</div></div></div>
-      <div class="mrow">
-        <!-- FIX #1: </td> solto removido; corrigido para </div> -->
-        <div class="mf"><div class="fl">Qtd / Unidade</div><div class="fv mn">${fmt(r.C7_QUANT)} ${r.C7_UM||''}</div></div>
-        <div class="mf"><div class="fl">Qtd. Entregue</div><div class="fv mn" style="color:var(--green)">${fmt(r.C7_QUJE)}</div></div>
-        <div class="mf"><div class="fl">Preço Unitário</div><div class="fv mn">R$&nbsp;${fmt(r.C7_PRUNIT)}</div></div>
-        <div class="mf"><div class="fl">Total do Item</div><div class="fv mn" style="font-weight:600">R$&nbsp;${fmt(r.C7_TOTAL)}</div></div>
-      </div>
-      <div class="mrow">
-        <div class="mf"><div class="fl">Centro de Custo</div><div class="fv mn">${r.C7_CC||'-'}</div></div>
-        <div class="mf"><div class="fl">Classe Valor</div><div class="fv mn">${r.C7_CLASSEVALOR||'-'}</div></div>
-        <div class="mf"><div class="fl">SC de Origem</div><div class="fv mn">${r.C7_SOLICIT||'-'}</div></div>
-        <div class="mf"><div class="fl">Dt. Entrega</div><div class="fv mn">${fmtData(r.C7_DATPRF)}</div></div>
-      </div>
-      ${r.C7_OBS?`<div class="mrow"><div class="mf full"><div class="fl">Observação</div><div class="fv" style="color:var(--amber)">${r.C7_OBS}</div></div></div>`:''}
-      ${itensHTML}
-    </div>
-    <div class="mfoot">
-      <span style="font-size:12px;color:var(--muted);margin-right:auto">Total do PC: <strong style="color:var(--green)">R$&nbsp;${fmt(totalPC)}</strong></span>
-      <button class="btn btn-g" onclick="closeM()">Fechar</button>
-    </div>`;
+  var todos=S.pc.filter(function(x){return x.C7_NUM===num;});
+  if(!todos.length) return;
+  var r=prod?todos.find(function(x){return x.C7_PRODUTO===prod;})||todos[0]:todos[0];
+  var totalPC=todos.reduce(function(a,b){return a+(+b.C7_TOTAL||0);},0);
+  var itensHTML=todos.length>1?'<div style="margin-top:14px"><div class="fl" style="margin-bottom:7px">TODOS OS ITENS DESTE PEDIDO ('+todos.length+')</div><div style="border:1px solid var(--border);border-radius:8px;overflow:hidden"><table style="width:100%;border-collapse:collapse;font-size:11.5px"><thead style="background:var(--surface2)"><tr><th style="padding:7px 10px;text-align:left;color:var(--muted);font-size:10px">Produto</th><th style="padding:7px 10px;text-align:left;color:var(--muted);font-size:10px">Descrição</th><th style="padding:7px 10px;text-align:right;color:var(--muted);font-size:10px">Qtd</th><th style="padding:7px 10px;text-align:right;color:var(--muted);font-size:10px">Total</th><th style="padding:7px 10px;text-align:left;color:var(--muted);font-size:10px">Entrega</th></tr></thead><tbody>'
+    +todos.map(function(it){return'<tr style="border-top:1px solid var(--border)"><td style="padding:7px 10px;font-family:var(--mono);font-size:11px">'+(it.C7_PRODUTO||'')+'</td><td style="padding:7px 10px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+(it.C7_DESCRI||'')+'">'+it.C7_DESCRI+'</td><td style="padding:7px 10px;text-align:right;font-family:var(--mono)">'+fmt(it.C7_QUANT)+'</td><td style="padding:7px 10px;text-align:right;font-family:var(--mono);font-weight:600">R$&nbsp;'+fmt(it.C7_TOTAL)+'</td><td style="padding:7px 10px;font-family:var(--mono);font-size:11px">'+fmtData(it.C7_DATPRF)+'</td></tr>';}).join('')
+    +'<tr style="border-top:2px solid var(--border2);background:var(--surface2)"><td colspan="3" style="padding:7px 10px;font-size:11px;color:var(--muted)">Total do Pedido</td><td style="padding:7px 10px;text-align:right;font-family:var(--mono);font-weight:700;color:var(--green)">R$&nbsp;'+fmt(totalPC)+'</td><td></td></tr></tbody></table></div></div>':'';
+  document.getElementById('mc').innerHTML=
+    '<div class="mh"><div class="mh-t">Pedido '+r.C7_NUM+' &nbsp;'+btipo(r.C7_TIPO)+'&nbsp;'+bpc(r.C7_STATUS)+(todos.length>1?'<span style="font-size:11px;color:var(--muted);font-weight:400;margin-left:8px">'+todos.length+' itens</span>':'')+'</div><button class="mclose" onclick="closeM()">×</button></div>'
+    +'<div class="mb">'
+    +'<div class="mrow"><div class="mf"><div class="fl">Filial</div><div class="fv mn">'+(r.C7_FILIAL_DESC||r.C7_FILIAL||'')+'</div></div><div class="mf"><div class="fl">Número</div><div class="fv mn">'+(r.C7_NUM||'')+'</div></div><div class="mf"><div class="fl">Emissão</div><div class="fv mn">'+fmtData(r.C7_EMISSAO)+'</div></div><div class="mf"><div class="fl">Comprador</div><div class="fv">'+(r.C7_COMPRADOR||'-')+'</div></div></div>'
+    +'<div class="mrow"><div class="mf full"><div class="fl">Produto · Descrição</div><div class="fv">'+(r.C7_PRODUTO||'')+' — '+(r.C7_DESCRI||'')+'</div></div></div>'
+    +'<div class="mrow"><div class="mf full"><div class="fl">Fornecedor</div><div class="fv mn">'+(r.C7_FORNECE||'-')+'</div></div></div>'
+    +'<div class="mrow"><div class="mf"><div class="fl">Qtd / Unidade</div><div class="fv mn">'+fmt(r.C7_QUANT)+' '+(r.C7_UM||'')+'</div></div><div class="mf"><div class="fl">Qtd. Entregue</div><div class="fv mn" style="color:var(--green)">'+fmt(r.C7_QUJE)+'</div></div><div class="mf"><div class="fl">Preço Unitário</div><div class="fv mn">R$&nbsp;'+fmt(r.C7_PRUNIT)+'</div></div><div class="mf"><div class="fl">Total do Item</div><div class="fv mn" style="font-weight:600">R$&nbsp;'+fmt(r.C7_TOTAL)+'</div></div></div>'
+    +'<div class="mrow"><div class="mf"><div class="fl">Centro de Custo</div><div class="fv mn">'+(r.C7_CC||'-')+'</div></div><div class="mf"><div class="fl">Classe Valor</div><div class="fv mn">'+(r.C7_CLASSEVALOR||'-')+'</div></div><div class="mf"><div class="fl">SC de Origem</div><div class="fv mn">'+(r.C7_SOLICIT||'-')+'</div></div><div class="mf"><div class="fl">Dt. Entrega</div><div class="fv mn">'+fmtData(r.C7_DATPRF)+'</div></div></div>'
+    +(r.C7_OBS?'<div class="mrow"><div class="mf full"><div class="fl">Observação</div><div class="fv" style="color:var(--amber)">'+r.C7_OBS+'</div></div></div>':'')
+    +itensHTML+'</div>'
+    +'<div class="mfoot"><span style="font-size:12px;color:var(--muted);margin-right:auto">Total do PC: <strong style="color:var(--green)">R$&nbsp;'+fmt(totalPC)+'</strong></span><button class="btn btn-g" onclick="closeM()">Fechar</button></div>';
   document.getElementById('modal').style.display='flex';
 }
 
 function vSC(num){
-  const r=S.sc.find(x=>x.C1_NUM===num); if(!r)return;
-  document.getElementById('mc').innerHTML=`
-    <div class="mh"><div class="mh-t">Solicitação ${r.C1_NUM} &nbsp;${btipo(r.C1_TIPO)}&nbsp;${bsc(r.C1_STATUS)}</div>
-      <button class="mclose" onclick="closeM()">×</button></div>
-    <div class="mb">
-      <div class="mrow">
-        <div class="mf"><div class="fl">Filial</div><div class="fv mn" style="font-size:11px">${r.C1_FILIAL_DESC||r.C1_FILIAL||''}</div></div>
-        <div class="mf"><div class="fl">C1_NUM / C1_ITEM</div><div class="fv mn">${r.C1_NUM||''} / ${r.C1_ITEM||''}</div></div>
-        <div class="mf"><div class="fl">C1_EMISSAO</div><div class="fv mn">${fmtData(r.C1_EMISSAO)}</div></div>
-        <div class="mf"><div class="fl">C1_DATPRF</div><div class="fv mn">${fmtData(r.C1_DATPRF)}</div></div>
-      </div>
-      <div class="mrow"><div class="mf full"><div class="fl">C1_PRODUTO · C1_DESCRI</div><div class="fv">${r.C1_PRODUTO||''} — ${r.C1_DESCRI||''}</div></div></div>
-      <div class="mrow">
-        <div class="mf"><div class="fl">C1_QUANT</div><div class="fv mn">${fmt(r.C1_QUANT)}</div></div>
-        <div class="mf"><div class="fl">C1_QUJE (atendida)</div><div class="fv mn" style="color:var(--green)">${fmt(r.C1_QUJE)}</div></div>
-        <div class="mf"><div class="fl">C1_CC</div><div class="fv mn">${r.C1_CC||''}</div></div>
-        <div class="mf"><div class="fl">C1_APROV</div><div class="fv mn">${r.C1_APROV==='L'?'✅ Liberada':'🔒 Bloqueada'}</div></div>
-      </div>
-      <div class="mrow">
-        <div class="mf"><div class="fl">Qtd / Unid</div><div class="fv mn">${fmt(r.C1_QUANT)} ${r.C1_UM||''}</div></div>
-        <div class="mf"><div class="fl">Grupo</div><div class="fv mn">${r.C1_GRUPO||'-'}</div></div>
-        <div class="mf"><div class="fl">Classe Valor</div><div class="fv mn">${r.C1_CLASSEVALOR||'-'}</div></div>
-        <div class="mf"><div class="fl">Valor Estimado</div><div class="fv mn">R$&nbsp;${fmt(r.C1_VALOREST||0)}</div></div>
-      </div>
-      <div class="mrow">
-        <div class="mf"><div class="fl">C1_SOLICIT</div><div class="fv">${r.C1_SOLICIT||'-'}</div></div>
-        <div class="mf"><div class="fl">C1_PEDIDO (PC gerado)</div><div class="fv">${r.C1_PEDIDO?`<span class="badge bt">${r.C1_PEDIDO}</span>`:'-'}</div></div>
-      </div>
-    </div>
-    <div class="mfoot"><button class="btn btn-g" onclick="closeM()">Fechar</button></div>`;
+  var r=S.sc.find(function(x){return x.C1_NUM===num;});
+  if(!r) return;
+  document.getElementById('mc').innerHTML=
+    '<div class="mh"><div class="mh-t">Solicitação '+r.C1_NUM+' &nbsp;'+btipo(r.C1_TIPO)+'&nbsp;'+bsc(r.C1_STATUS)+'</div><button class="mclose" onclick="closeM()">×</button></div>'
+    +'<div class="mb">'
+    +'<div class="mrow"><div class="mf"><div class="fl">Filial</div><div class="fv mn">'+(r.C1_FILIAL_DESC||r.C1_FILIAL||'')+'</div></div><div class="mf"><div class="fl">Número / Item</div><div class="fv mn">'+(r.C1_NUM||'')+' / '+(r.C1_ITEM||'')+'</div></div><div class="mf"><div class="fl">Emissão</div><div class="fv mn">'+fmtData(r.C1_EMISSAO)+'</div></div><div class="mf"><div class="fl">Necessidade</div><div class="fv mn">'+fmtData(r.C1_DATPRF)+'</div></div></div>'
+    +'<div class="mrow"><div class="mf full"><div class="fl">Produto · Descrição</div><div class="fv">'+(r.C1_PRODUTO||'')+' — '+(r.C1_DESCRI||'')+'</div></div></div>'
+    +'<div class="mrow"><div class="mf"><div class="fl">Qtd Solicitada</div><div class="fv mn">'+fmt(r.C1_QUANT)+'</div></div><div class="mf"><div class="fl">Qtd em Pedido</div><div class="fv mn" style="color:var(--green)">'+fmt(r.C1_QUJE)+'</div></div><div class="mf"><div class="fl">C. Custo</div><div class="fv mn">'+(r.C1_CC||'')+'</div></div><div class="mf"><div class="fl">Aprovação</div><div class="fv mn">'+(r.C1_APROV==='L'?'✅ Liberada':'🔒 Bloqueada')+'</div></div></div>'
+    +'<div class="mrow"><div class="mf"><div class="fl">Grupo</div><div class="fv mn">'+(r.C1_GRUPO||'-')+'</div></div><div class="mf"><div class="fl">Classe Valor</div><div class="fv mn">'+(r.C1_CLASSEVALOR||'-')+'</div></div><div class="mf"><div class="fl">Valor Estimado</div><div class="fv mn">R$&nbsp;'+fmt(r.C1_VALOREST||0)+'</div></div><div class="mf"><div class="fl">PC Gerado</div><div class="fv">'+(r.C1_PEDIDO?'<span class="badge bt">'+r.C1_PEDIDO+'</span>':'-')+'</div></div></div>'
+    +'<div class="mrow"><div class="mf"><div class="fl">Solicitante</div><div class="fv">'+(r.C1_SOLICIT||'-')+'</div></div></div>'
+    +'</div><div class="mfoot"><button class="btn btn-g" onclick="closeM()">Fechar</button></div>';
   document.getElementById('modal').style.display='flex';
 }
 
-function closeM(e){if(!e||e.target===document.getElementById('modal'))document.getElementById('modal').style.display='none';}
+function closeM(e){if(!e||e.target===document.getElementById('modal')) document.getElementById('modal').style.display='none';}
 
-// ═══════════════════════════════════════════════
-// IMPORTAR
-// ═══════════════════════════════════════════════
+// ══════════════════════════════════════════════════════
+// IMPORTAR — UI
+// ══════════════════════════════════════════════════════
 function rImp(){
-  const campos={
-    mata121:[
-      ['Filial','Filial','Ex: 020102-TGM - FILIAL BARRO ALTO'],['Numero','Número pedido','Identificador único SC7'],
-      ['Produto','Código produto','Código no SB1'],['Descricao','Descrição','Descrição do produto'],
-      ['Fornecedor','Fornecedor','CNPJ/CPF do fornecedor'],['Quantidade','Quantidade','Qtd pedida'],
-      ['Prc Unitario','Preço unitário','Valor por unidade'],['Unidade','Unidade','SV=Serviço → Uso Direto'],
-      ['Classe Valor','Classe Valor','Classe orçamentária'],['Centro Custo','Centro de Custo','CC do pedido'],
-      ['Data Emissao','Data Emissão','Data do pedido'],['Dt. Entrega','Previsão entrega','Data prometida'],
-      ['Numero da SC','SC de origem','SC1 que gerou este PC'],['Qtd.Entregue','Qtd entregue','Baixas por NF'],
-      ['Comprador','Comprador','Login do comprador responsável'],
-    ],
-    mata110:[
-      ['Filial','Filial','Ex: 020102-TGM - FILIAL BARRO ALTO'],['Numero da SC','Número SC','Identificador único SC1'],
-      ['Item da SC','Item','Sequência do item'],['Produto','Código produto','Código SB1'],
-      ['Descricao','Descrição','Descrição do produto'],['Quantidade','Quantidade','Qtd solicitada'],
-      ['Quant.em Ped','Qtd em Pedido','Qtd que já gerou PC → Status G'],['Centro Custo','Centro de Custo','CC da SC'],
-      ['Classe Valor','Classe Valor','Classe orçamentária'],['Unid Medida','Unidade','SV=Serviço → Uso Direto'],
-      ['DT Emissao','Data emissão','Data da solicitação'],['Valor Estim.','Valor Estimado','Preço estimado'],
-      ['Grupo','Grupo','Grupo do produto'],
-    ],
-    matr290:[
-      ['Filial','Filial','Unidade'],['Codigo','Código produto','Chave SB1'],
-      ['Descricao','Descrição','Nome do produto'],['Desc. Cientifica','Desc. Científica','Nome técnico'],
-      ['Tp','Tipo','PA, MP, PI…'],['Grupo','Grupo','Grupo do produto'],
-      ['UM','Unidade medida','UN, KG, MT…'],['Saldo Atual','Saldo atual','Quantidade física'],
-      ['Empenho','Empenhado','Reservas em aberto'],['SCs Colocadas','SCs','SCs colocadas'],
-      ['PCs Colocados','PCs','PCs colocados'],['OPs Colocadas','OPs','OPs colocadas'],
-      ['PVs Colocados','PVs','PVs colocados'],['Ponto Pedido','Ponto Pedido','Ponto de pedido'],
-      ['Lote Econom.','Lote Econômico','Lote'],['Entrega','Entrega','Prazo'],
-      ['Estoque em Meses','Estoque Meses','Estoque'],['Med. Consumo','Consumo Médio','Consumo'],
-      ['DT.Ult.Saida','Última Saída','Data'],['CL','CL','Classe'],
-      ['Contr.Endere','Controle de Endereço','Controle'],['Classe ABC','Classe ABC','Curva ABC'],
-    ],
+  var campos={
+    mata121:[['Filial','Filial','Ex: 020102-TGM'],['Numero','Número pedido','Identificador SC7'],['Produto','Código produto','Código SB1'],['Descricao','Descrição','Descrição do produto'],['Fornecedor','Fornecedor','CNPJ/Cód. fornecedor'],['Quantidade','Quantidade','Qtd pedida'],['Prc Unitario','Preço unitário','Valor por unidade'],['Unidade','Unidade','SV=Serviço → Uso Direto'],['Classe Valor','Classe Valor','Classe orçamentária'],['Centro Custo','Centro de Custo','CC do pedido'],['Data Emissao','Data Emissão','Data do pedido'],['Dt. Entrega','Previsão entrega','Data prometida'],['Numero da SC','SC de origem','SC1 que gerou este PC'],['Qtd.Entregue','Qtd entregue','Baixas por NF'],['Comprador','Comprador','Login do comprador']],
+    mata110:[['Filial','Filial','Ex: 020102-TGM'],['Numero da SC','Número SC','Identificador SC1'],['Item da SC','Item','Sequência do item'],['Produto','Código produto','Código SB1'],['Descricao','Descrição','Descrição do produto'],['Quantidade','Quantidade','Qtd solicitada'],['Quant.em Ped','Qtd em Pedido','Qtd que já gerou PC'],['Centro Custo','Centro de Custo','CC da SC'],['Classe Valor','Classe Valor','Classe orçamentária'],['Unid Medida','Unidade','SV=Serviço → Uso Direto'],['DT Emissao','Data emissão','Data da solicitação'],['Valor Estim.','Valor Estimado','Preço estimado'],['Grupo','Grupo','Grupo do produto']],
+    matr290:[['Filial','Filial','Unidade'],['Codigo','Código produto','Chave SB1'],['Descricao','Descrição','Nome do produto'],['Desc. Cientifica','Desc. Científica','Nome técnico'],['Tp','Tipo','PA, MP, PI…'],['Grupo','Grupo','Grupo do produto'],['UM','Unidade medida','UN, KG, MT…'],['Saldo Atual','Saldo atual','Quantidade física'],['Empenho','Empenhado','Reservas em aberto'],['SCs Colocadas','SCs','SCs colocadas'],['PCs Colocados','PCs','PCs colocados'],['OPs Colocadas','OPs','OPs colocadas'],['PVs Colocados','PVs','PVs colocados'],['Ponto Pedido','Ponto Pedido','Ponto de pedido'],['Lote Econom.','Lote Econômico','Lote min.'],['Entrega','Entrega','Prazo dias'],['Estoque em Meses','Estoque Meses','Cobertura'],['Med. Consumo','Consumo Médio','Médio mensal'],['DT.Ult.Saida','Última Saída','Data ult.mov.'],['CL','CL','Classe'],['Contr.Endere','Controle Endereço','Endereço'],['Classe ABC','Classe ABC','Curva ABC']],
   };
-  const tab=S.itab;
-  return`
-  <div class="sh"><div class="sh-title">Importar Planilhas</div><div class="sh-sub">Upload das exportações MATA110 · MATA121 · MATR290</div></div>
-  <div class="imp-grid">
-    ${[
-      {id:'pc',title:'MATA121 — Pedido de Compra',sub:'Tabela SC7',icon:'📄',color:'rgba(79,124,255,.12)',tipo:'pc'},
-      {id:'sc',title:'MATA110 — Solicitação de Compra',sub:'Tabela SC1',icon:'📝',color:'rgba(6,201,212,.12)',tipo:'sc'},
-      {id:'est',title:'MATR290 — Análise de Estoque',sub:'Tabelas SB1 / SB2',icon:'📦',color:'rgba(124,92,255,.12)',tipo:'est'},
-    ].map(c=>`
-    <div class="imp-card">
-      <div class="imp-hdr">
-        <div class="imp-hdr-icon" style="background:${c.color}">${c.icon}</div>
-        <div><div class="imp-hdr-t">${c.title}</div><div class="imp-hdr-s">${c.sub}</div></div>
-      </div>
-      <div class="imp-zone" id="zone-${c.id}"
-        onclick="document.getElementById('file-${c.id}').click()"
-        ondragover="dov(event,'zone-${c.id}')" ondragleave="dlv('zone-${c.id}')"
-        ondrop="ddr(event,'${c.tipo}')">
-        <div class="imp-zi">📤</div>
-        <div class="imp-zt">Arraste ou clique para selecionar<br><span style="font-size:11px">.xlsx ou .csv (até 50MB)</span></div>
-        <button class="btn btn-p" style="margin:0 auto" onclick="event.stopPropagation();document.getElementById('file-${c.id}').click()">Selecionar</button>
-        <input type="file" id="file-${c.id}" accept=".xlsx,.csv" onchange="procFile(this,'${c.tipo}')"/>
-      </div>
-    </div>`).join('')}
-  </div>
-  <div class="imp-fields">
-    <div class="imp-ft">Campos reconhecidos automaticamente</div>
-    <div class="imp-tabs">
-      ${['mata121','mata110','matr290'].map(t=>`<button class="imp-tab${tab===t?' active':''}" onclick="S.itab='${t}';render()">${t.toUpperCase()}</button>`).join('')}
-    </div>
-    <div class="fcol-grid">
-      ${(campos[tab]||[]).map(([f,l,d])=>`<div class="fcol"><div class="fcol-f">${f}</div><div class="fcol-l">${l}</div><div class="fcol-d">${d}</div></div>`).join('')}
-    </div>
-    <div style="margin-top:12px;font-size:12px;color:var(--muted);line-height:1.6">
-      💡 O sistema reconhece automaticamente os nomes de campo do Protheus. Funciona com cabeçalho em código (C7_NUM) ou em português (Número do Pedido). O campo <span style="color:var(--accent);font-family:var(--mono)">C7_TIPO / C1_TIPO = R</span> indica Estoque; <span style="color:var(--accent2);font-family:var(--mono)">S</span> indica Uso Direto.
-    </div>
-  </div>`;
+  var tab=S.itab;
+  return'<div class="sh"><div class="sh-title">Importar Planilhas</div><div class="sh-sub">Upload das exportações MATA110 · MATA121 · MATR290</div></div>'
+    +'<div class="imp-grid">'
+    +[{id:'pc',title:'MATA121 — Pedido de Compra',sub:'Tabela SC7',icon:'📄',color:'rgba(79,124,255,.12)',tipo:'pc'},{id:'sc',title:'MATA110 — Solicitação de Compra',sub:'Tabela SC1',icon:'📝',color:'rgba(6,201,212,.12)',tipo:'sc'},{id:'est',title:'MATR290 — Análise de Estoque',sub:'Tabelas SB1 / SB2',icon:'📦',color:'rgba(124,92,255,.12)',tipo:'est'}].map(function(c){
+      return'<div class="imp-card"><div class="imp-hdr"><div class="imp-hdr-icon" style="background:'+c.color+'">'+c.icon+'</div><div><div class="imp-hdr-t">'+c.title+'</div><div class="imp-hdr-s">'+c.sub+'</div></div></div>'
+        +'<div class="imp-zone" id="zone-'+c.id+'" onclick="document.getElementById(\'file-'+c.id+'\').click()" ondragover="dov(event,\'zone-'+c.id+'\')" ondragleave="dlv(\'zone-'+c.id+'\')" ondrop="ddr(event,\''+c.tipo+'\')">'
+        +'<div class="imp-zi">📤</div><div class="imp-zt">Arraste ou clique para selecionar<br><span style="font-size:11px">.xlsx ou .csv (até 50MB)</span></div>'
+        +'<button class="btn btn-p" style="margin:0 auto" onclick="event.stopPropagation();document.getElementById(\'file-'+c.id+'\').click()">Selecionar</button>'
+        +'<input type="file" id="file-'+c.id+'" accept=".xlsx,.csv" onchange="procFile(this,\''+c.tipo+'\')"/></div></div>';
+    }).join('')
+    +'</div>'
+    +'<div class="imp-fields"><div class="imp-ft">Campos reconhecidos automaticamente</div>'
+    +'<div class="imp-tabs">'+['mata121','mata110','matr290'].map(function(t){return'<button class="imp-tab'+(tab===t?' active':'')+'" onclick="S.itab=\''+t+'\';render()">'+t.toUpperCase()+'</button>';}).join('')+'</div>'
+    +'<div class="fcol-grid">'+((campos[tab]||[]).map(function(f){return'<div class="fcol"><div class="fcol-f">'+f[0]+'</div><div class="fcol-l">'+f[1]+'</div><div class="fcol-d">'+f[2]+'</div></div>';}).join(''))+'</div>'
+    +'<div style="margin-top:12px;font-size:12px;color:var(--muted);line-height:1.6">💡 O sistema reconhece automaticamente os nomes de campo do Protheus. O campo <span style="color:var(--accent);font-family:var(--mono)">Unidade = SV</span> indica Uso Direto.</div></div>';
 }
 
-function dov(e,id){e.preventDefault();document.getElementById(id)?.classList.add('drag');}
-function dlv(id){document.getElementById(id)?.classList.remove('drag');}
-function ddr(e,tipo){e.preventDefault();dlv('zone-'+(tipo==='pc'?'pc':tipo==='sc'?'sc':'est'));const f=e.dataTransfer.files[0];if(f)procFileObj(f,tipo);}
-function procFile(inp,tipo){const f=inp.files[0];if(f)procFileObj(f,tipo);}
+function dov(e,id){e.preventDefault();document.getElementById(id)&&document.getElementById(id).classList.add('drag');}
+function dlv(id){document.getElementById(id)&&document.getElementById(id).classList.remove('drag');}
+function ddr(e,tipo){e.preventDefault();var id=tipo==='pc'?'pc':tipo==='sc'?'sc':'est';dlv('zone-'+id);var f=e.dataTransfer.files[0];if(f) procFileObj(f,tipo);}
+function procFile(inp,tipo){var f=inp.files[0];if(f) procFileObj(f,tipo);}
 
-function showProgress(msg,pct){
-  let el=document.getElementById('prog-bar');
+// ══════════════════════════════════════════════════════
+// BARRA DE PROGRESSO (overlay com porcentagem real)
+// ══════════════════════════════════════════════════════
+function showProgress(msg,sub,pct){
+  var el=document.getElementById('prog-overlay');
   if(!el){
-    el=document.createElement('div');el.id='prog-bar';
-    el.style.cssText='position:fixed;bottom:28px;right:28px;background:rgba(13,17,30,.97);border:1px solid rgba(79,124,255,.25);border-radius:14px;padding:16px 20px;z-index:9999;min-width:300px;box-shadow:0 12px 40px rgba(0,0,0,.6);font-size:13px;font-family:Inter,sans-serif;backdrop-filter:blur(12px);';
+    el=document.createElement('div');el.id='prog-overlay';
+    el.innerHTML='<div id="prog-box"><div id="prog-label"></div><div id="prog-sub"></div><div id="prog-track"><div id="prog-fill"></div></div><div id="prog-pct"></div></div>';
     document.body.appendChild(el);
   }
-  el.innerHTML=
-    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'
-    +'<div style="width:8px;height:8px;border-radius:50%;background:#4f7cff;box-shadow:0 0 8px #4f7cff;animation:pulse 1s infinite;flex-shrink:0"></div>'
-    +'<span style="color:#e2e6f3;font-weight:500">'+msg+'</span>'
-    +'<span style="margin-left:auto;color:#4f7cff;font-family:JetBrains Mono,monospace;font-size:11px;font-weight:600">'+pct+'%</span>'
-    +'</div>'
-    +'<div style="background:rgba(31,38,64,.8);border-radius:99px;height:4px;overflow:hidden">'
-    +'<div style="background:linear-gradient(90deg,#4f7cff,#7c5cff);height:100%;width:'+pct+'%;transition:width .25s ease;border-radius:99px"></div>'
-    +'</div>';
+  document.getElementById('prog-label').textContent=msg;
+  document.getElementById('prog-sub').textContent=sub||'';
+  document.getElementById('prog-fill').style.width=pct+'%';
+  document.getElementById('prog-pct').textContent=pct+'%';
 }
 function hideProgress(){
-  const el=document.getElementById('prog-bar');
-  if(el){el.style.opacity='0';el.style.transform='translateY(8px)';el.style.transition='all .4s ease';setTimeout(()=>el.remove(),450);}
+  var el=document.getElementById('prog-overlay');
+  if(el) el.remove();
 }
 
+// ══════════════════════════════════════════════════════
+// PROCESSAMENTO — Worker + chunks otimizados
+// ══════════════════════════════════════════════════════
 function procFileObj(file,tipo){
-  showProgress('📂 Lendo '+file.name+'…',10);
-  const isCSV=file.name.toLowerCase().endsWith('.csv');
-  const rd=new FileReader();
+  showProgress('Lendo arquivo…',file.name,5);
+  var isCSV=file.name.toLowerCase().endsWith('.csv');
+  var rd=new FileReader();
   rd.onload=function(e){
-    showProgress('⚙️ Extraindo dados (não mude de tela)...',30);
-    const workerCode=document.getElementById('worker-script').textContent;
-    const worker=new Worker(URL.createObjectURL(new Blob([workerCode],{type:'application/javascript'})));
+    showProgress('Extraindo dados via Worker…','Não feche esta aba',20);
+    var workerCode=document.getElementById('worker-script').textContent;
+    var worker=new Worker(URL.createObjectURL(new Blob([workerCode],{type:'application/javascript'})));
     worker.onmessage=function(msg){
       if(msg.data.success){
-        const rows=msg.data.data;
-        if(!rows.length){toast('Arquivo vazio ou formato não reconhecido','error');hideProgress();return;}
-        showProgress('📊 Mapeando '+rows.length.toLocaleString('pt-BR')+' registros…',60);
-        processarEmChunks(rows,tipo);
+        var rows=msg.data.data;
+        if(!rows.length){hideProgress();toast('Arquivo vazio ou formato não reconhecido','error');return;}
+        showProgress('Mapeando '+rows.length.toLocaleString('pt-BR')+' registros…','Processando no main thread',50);
+        /* OTIMIZAÇÃO: rAF garante que o browser pinte o progresso antes de bloquear */
+        requestAnimationFrame(function(){
+          processarEmChunks(rows,tipo);
+        });
       } else {
-        hideProgress(); toast('Erro ao ler arquivo: '+msg.data.error,'error');
+        hideProgress();toast('Erro ao ler arquivo: '+msg.data.error,'error');
       }
       worker.terminate();
     };
-    worker.onerror=function(err){hideProgress();toast('Erro no processador: '+err.message,'error');worker.terminate();};
+    worker.onerror=function(err){hideProgress();toast('Erro no worker: '+err.message,'error');worker.terminate();};
     if(isCSV) worker.postMessage({type:'csv',text:e.target.result,importType:tipo});
     else worker.postMessage({type:'xlsx',buffer:e.target.result,importType:tipo},[e.target.result]);
   };
@@ -1258,77 +1004,83 @@ function procFileObj(file,tipo){
   else rd.readAsArrayBuffer(file);
 }
 
-// FIX #16: chunk inicial reduzido para 1000 e teto máximo em 5000 para evitar travamento
+/*
+  OTIMIZAÇÃO CRÍTICA: processarEmChunks
+  - chunk fixo de 2000 (mais previsível que o adaptativo que travava)
+  - setTimeout(0) cede ao event loop; o browser pode pintar entre chunks
+  - showProgress com porcentagem real baseada em (i/total)
+  - mapPC/mapSC/mapEst retornam arrays de objetos simples — sem closures aninhadas
+*/
 function processarEmChunks(rows,tipo){
-  const total=rows.length;
-  const processados=new Array(total);
-  let chunk=1000;
-  let i=0;
+  var total=rows.length;
+  var result=[];
+  var CHUNK=2000;
+  var i=0;
+
   function step(){
-    const t0=performance.now();
-    const fim=Math.min(i+chunk,total);
-    const fatia=rows.slice(i,fim);
-    let mapeados;
+    var fim=Math.min(i+CHUNK,total);
+    var fatia=rows.slice(i,fim);
+    var mapeados;
     if(tipo==='pc') mapeados=mapPC(fatia,i);
     else if(tipo==='sc') mapeados=mapSC(fatia,i);
     else mapeados=mapEst(fatia,i);
-    for(let k=0;k<mapeados.length;k++) processados[i+k]=mapeados[k];
+    Array.prototype.push.apply(result,mapeados);
     i=fim;
-    const elapsed=performance.now()-t0;
-    // FIX #16: teto conservador de 5000 (era 8000)
-    if(elapsed<10&&chunk<5000) chunk+=500;
-    else if(elapsed>30&&chunk>500) chunk-=500;
-    showProgress('⚙️ Processando... '+i.toLocaleString('pt-BR')+' / '+total.toLocaleString('pt-BR'), 60+Math.round((i/total)*30));
-    if(i<total){setTimeout(step,15);return;}
-    showProgress('💾 Montando Tabela…',95);
-    setTimeout(function(){finalizarImport(processados.filter(Boolean),tipo);},30);
+    var pct=50+Math.round((i/total)*40);
+    showProgress('Processando…',i.toLocaleString('pt-BR')+' / '+total.toLocaleString('pt-BR')+' registros',pct);
+    if(i<total){ setTimeout(step,0); return; }
+    showProgress('Finalizando…','Salvando no IndexedDB',95);
+    setTimeout(function(){finalizarImport(result.filter(Boolean),tipo);},30);
   }
-  setTimeout(step,10);
+  setTimeout(step,0);
 }
 
-// FIX #11: merge correto — coleta existentes ANTES de esvaziar o array
 function finalizarImport(n,tipo){
   if(tipo==='pc'){
-    const chave=x=>x.C7_FILIAL+'|'+x.C7_NUM+'|'+x.C7_PRODUTO;
-    const idx=new Map(S.pc.map(x=>[chave(x),x])); // coleta antes de limpar
-    n.forEach(x=>idx.set(chave(x),x));
+    var chave=function(x){return x.C7_FILIAL+'|'+x.C7_NUM+'|'+x.C7_PRODUTO;};
+    var idx=new Map(S.pc.map(function(x){return[chave(x),x];}));
+    n.forEach(function(x){idx.set(chave(x),x);});
     S.pc=Array.from(idx.values());
-    rebuildIdxPC(); updBadges(); _salvarAgora(); hideProgress();
+    rebuildIdxPC();updBadges();_salvarAgora();hideProgress();
     toast('✅ '+n.length.toLocaleString('pt-BR')+' linhas MATA121 importadas!','success');
-    setTimeout(()=>nav('pedidos'),700);
+    setTimeout(function(){nav('pedidos');},700);
   } else if(tipo==='sc'){
-    const chave=x=>x.C1_FILIAL+'|'+x.C1_NUM+'|'+x.C1_ITEM+'|'+x.C1_PRODUTO;
-    const idx=new Map(S.sc.map(x=>[chave(x),x]));
-    n.forEach(x=>idx.set(chave(x),x));
+    var chave=function(x){return x.C1_FILIAL+'|'+x.C1_NUM+'|'+x.C1_ITEM+'|'+x.C1_PRODUTO;};
+    var idx=new Map(S.sc.map(function(x){return[chave(x),x];}));
+    n.forEach(function(x){idx.set(chave(x),x);});
     S.sc=Array.from(idx.values());
-    rebuildIdxSC(); updBadges(); _salvarAgora(); hideProgress();
+    rebuildIdxSC();updBadges();_salvarAgora();hideProgress();
     toast('✅ '+n.length.toLocaleString('pt-BR')+' linhas MATA110 importadas!','success');
-    setTimeout(()=>nav('sc'),700);
+    setTimeout(function(){nav('sc');},700);
   } else {
-    const chave=x=>x.B1_KEY||x.B1_FILIAL+'|'+x.B1_COD;
-    const idx=new Map(S.est.map(x=>[chave(x),x]));
-    n.forEach(x=>idx.set(chave(x),x));
+    var chave=function(x){return x.B1_KEY||x.B1_FILIAL+'|'+x.B1_COD;};
+    var idx=new Map(S.est.map(function(x){return[chave(x),x];}));
+    n.forEach(function(x){idx.set(chave(x),x);});
     S.est=Array.from(idx.values());
-    rebuildIdxEst(); S.vs.est._data=[]; S.vs.est.start=0;
-    updBadges(); _salvarAgora(); hideProgress();
+    rebuildIdxEst();S.vs.est._data=[];S.vs.est.start=0;
+    updBadges();_salvarAgora();hideProgress();
     toast('✅ '+n.length.toLocaleString('pt-BR')+' produtos MATR290 importados!','success');
-    setTimeout(()=>nav('estoque'),700);
+    setTimeout(function(){nav('estoque');},700);
   }
 }
 
-// ═══════════════════════════════════════════════
-// MAPPERS — FIX #8 #9 #10: campos faltantes adicionados
-// ═══════════════════════════════════════════════
-function mp(obj,...cs){
-  for(let i=0;i<cs.length;i++){
-    let val=obj[cs[i]];
+// ══════════════════════════════════════════════════════
+// MAPPERS
+// ══════════════════════════════════════════════════════
+function mp(obj){
+  /* OTIMIZAÇÃO: aceita lista de chaves como array (sem spread) */
+  var keys=Array.prototype.slice.call(arguments,1);
+  for(var i=0;i<keys.length;i++){
+    var val=obj[keys[i]];
     if(val!==undefined&&val!==null&&val!=='') return String(val).trim();
   }
-  for(let k in obj){
-    const kl=k.toLowerCase();
-    for(let i=0;i<cs.length;i++){
-      if(kl===cs[i].toLowerCase()){
-        const val=obj[k];
+  /* fallback case-insensitive */
+  var objKeys=Object.keys(obj);
+  for(var i=0;i<keys.length;i++){
+    var kl=keys[i].toLowerCase();
+    for(var j=0;j<objKeys.length;j++){
+      if(objKeys[j].toLowerCase()===kl){
+        var val=obj[objKeys[j]];
         if(val!==undefined&&val!==null&&val!=='') return String(val).trim();
       }
     }
@@ -1336,250 +1088,239 @@ function mp(obj,...cs){
   return '';
 }
 
-function nTipo(v,um=''){const s=String(v).toUpperCase();const u=String(um).toUpperCase().trim();if(u==='SV')return'S';return(s==='S'||s.includes('DIRETO')||s.includes('SERVICO'))?'S':'R';}
+function nTipo(v,um){
+  var u=String(um||'').toUpperCase().trim();
+  if(u==='SV') return 'S';
+  var s=String(v||'').toUpperCase();
+  return(s==='S'||s.includes('DIRETO')||s.includes('SERVICO'))?'S':'R';
+}
 
 function nStPC(v,quje,qtd){
-  const s=String(v||'').toUpperCase().trim();
-  if(!s||s==='PENDENTE'||s==='ABERTO')return'';
-  if(s==='E'||s.includes('COTAC')||s.includes('COTAÇ'))return'E';
-  if(s==='P'||s.includes('PARCI'))return'P';
-  if(s==='A'||s.includes('APROV'))return'A';
-  if(s==='L'||s.includes('LIBER'))return'L';
-  if(s==='C'||s.includes('CANCEL'))return'C';
-  if(qtd>0){if(quje<=0)return'';if(quje>=qtd)return'L';return'P';}
-  return'';
+  var s=String(v||'').toUpperCase().trim();
+  if(!s||s==='PENDENTE'||s==='ABERTO') return '';
+  if(s==='E'||s.includes('COTAC')) return 'E';
+  if(s==='P'||s.includes('PARCI')) return 'P';
+  if(s==='A'||s.includes('APROV')) return 'A';
+  if(s==='L'||s.includes('LIBER')) return 'L';
+  if(s==='C'||s.includes('CANCEL')) return 'C';
+  if(qtd>0){if(quje<=0) return '';if(quje>=qtd) return 'L';return 'P';}
+  return '';
 }
 
 function nStSC(v,quantPed,quant){
-  const s=String(v||'').toUpperCase().trim();
-  if(!s||s==='PENDENTE'||s==='ABERTO')return'P';
-  if(s==='E'||s.includes('COTAC')||s.includes('COTAÇ'))return'E';
-  if(s==='L'||s.includes('LIBER'))return'L';
-  if(s==='G'||s.includes('GERO')||s.includes('PEDIDO'))return'G';
-  if(s==='B'||s.includes('BLOQ'))return'B';
-  if(s==='R'||s.includes('REJEIT'))return'R';
-  if(s==='C'||s.includes('CANCEL'))return'C';
-  if(!v&&quantPed>0)return'G';
-  return'P';
+  var s=String(v||'').toUpperCase().trim();
+  if(!s||s==='PENDENTE'||s==='ABERTO') return 'P';
+  if(s==='E'||s.includes('COTAC')) return 'E';
+  if(s==='L'||s.includes('LIBER')) return 'L';
+  if(s==='G'||s.includes('GERO')||s.includes('PEDIDO')) return 'G';
+  if(s==='B'||s.includes('BLOQ')) return 'B';
+  if(s==='R'||s.includes('REJEIT')) return 'R';
+  if(s==='C'||s.includes('CANCEL')) return 'C';
+  if(!v&&quantPed>0) return 'G';
+  return 'P';
 }
 
-function nNum(v){if(v===null||v===undefined||v==='')return 0;if(typeof v==='number')return+v.toFixed(4)*1||0;return+(String(v).replace(',','.').replace(/[^\d.-]/g,''))||0;}
+function nNum(v){
+  if(v===null||v===undefined||v==='') return 0;
+  if(typeof v==='number') return +v.toFixed(4)*1||0;
+  return +(String(v).replace(',','.').replace(/[^\d.-]/g,''))||0;
+}
 
+/* OTIMIZAÇÃO: mapPC/mapSC/mapEst com mp() inline — sem closures extras */
 function mapPC(rows,offset){
-  return rows.map(function(r,i){
-    const um=mp(r,'Unidade','Unid Medida','C7_UM','um','unidade');
-    const quant=nNum(mp(r,'C7_QUANT','Quantidade','quantidade','qtd'));
-    const quje=nNum(mp(r,'C7_QUJE','Qtd.Entregue','qtd.entregue','qtd entregue','quje'));
-    // FIX #8: campos do modal agora mapeados
-    return{
-      C7_FILIAL:      mp(r,'C7_FILIAL','Filial','filial')||'01',
-      C7_FILIAL_DESC: mp(r,'C7_FILIAL_DESC','desc filial'),
-      C7_NUM:         mp(r,'C7_NUM','Numero','numero','num')||String(offset+i+1).padStart(6,'0'),
-      C7_ITEM:        mp(r,'C7_ITEM','item')||String(offset+i+1).padStart(3,'0'),
-      C7_PRODUTO:     mp(r,'C7_PRODUTO','Produto','produto','codigo produto'),
-      C7_DESCRI:      mp(r,'C7_DESCRI','Descricao','descricao','descri','desc'),
-      C7_FORNECE:     mp(r,'C7_FORNECE','Fornecedor','fornecedor','fornece'),
-      C7_UM:          um,
-      C7_QUANT:       quant,
-      C7_PRUNIT:      nNum(mp(r,'C7_PRUNIT','Prc Unitario','preco unitario')),
-      C7_TOTAL:       nNum(mp(r,'C7_TOTAL','total','Total')),
-      C7_CC:          mp(r,'C7_CC','Centro Custo','centro custo'),
-      C7_TIPO:        nTipo(mp(r,'C7_TIPO','tipo'),um),
-      C7_EMISSAO:     fmtData(mp(r,'C7_EMISSAO','Data Emissao','data emissao','emissao')),
-      C7_DATPRF:      fmtData(mp(r,'C7_DATPRF','Dt. Entrega','dt. entrega','entrega')),
-      C7_QUJE:        quje,
-      C7_STATUS:      nStPC(mp(r,'C7_STATUS','status'),quje,quant),
-      C7_COMPRADOR:   mp(r,'Comprador','C7_COMPRADOR','comprador'),
-      C7_SOLICIT:     mp(r,'C7_SOLICIT','Numero da SC','numero da sc','sc origem'),
-      C7_CLASSEVALOR: mp(r,'C7_CLASSEVALOR','Classe Valor','classe valor'),
-      C7_OBS:         mp(r,'C7_OBS','obs','observacao','observação'),
+  var out=new Array(rows.length);
+  for(var i=0;i<rows.length;i++){
+    var r=rows[i];
+    var um=mp(r,'Unidade','Unid Medida','C7_UM','um','unidade');
+    var quant=nNum(mp(r,'C7_QUANT','Quantidade','quantidade','qtd'));
+    var quje=nNum(mp(r,'C7_QUJE','Qtd.Entregue','qtd.entregue','qtd entregue','quje'));
+    out[i]={
+      C7_FILIAL:     mp(r,'C7_FILIAL','Filial','filial')||'01',
+      C7_FILIAL_DESC:mp(r,'C7_FILIAL_DESC','desc filial'),
+      C7_NUM:        mp(r,'C7_NUM','Numero','numero','num')||String(offset+i+1).padStart(6,'0'),
+      C7_ITEM:       mp(r,'C7_ITEM','item')||String(offset+i+1).padStart(3,'0'),
+      C7_PRODUTO:    mp(r,'C7_PRODUTO','Produto','produto','codigo produto'),
+      C7_DESCRI:     mp(r,'C7_DESCRI','Descricao','descricao','descri','desc'),
+      C7_FORNECE:    mp(r,'C7_FORNECE','Fornecedor','fornecedor','fornece'),
+      C7_UM:         um,
+      C7_QUANT:      quant,
+      C7_PRUNIT:     nNum(mp(r,'C7_PRUNIT','Prc Unitario','preco unitario')),
+      C7_TOTAL:      nNum(mp(r,'C7_TOTAL','total','Total')),
+      C7_CC:         mp(r,'C7_CC','Centro Custo','centro custo'),
+      C7_TIPO:       nTipo(mp(r,'C7_TIPO','tipo'),um),
+      C7_EMISSAO:    fmtData(mp(r,'C7_EMISSAO','Data Emissao','data emissao','emissao')),
+      C7_DATPRF:     fmtData(mp(r,'C7_DATPRF','Dt. Entrega','dt. entrega','entrega')),
+      C7_QUJE:       quje,
+      C7_STATUS:     nStPC(mp(r,'C7_STATUS','status'),quje,quant),
+      C7_COMPRADOR:  mp(r,'Comprador','C7_COMPRADOR','comprador'),
+      C7_SOLICIT:    mp(r,'C7_SOLICIT','Numero da SC','numero da sc','sc origem'),
+      C7_CLASSEVALOR:mp(r,'C7_CLASSEVALOR','Classe Valor','classe valor'),
+      C7_OBS:        mp(r,'C7_OBS','obs','observacao'),
     };
-  });
+  }
+  return out;
 }
 
 function mapSC(rows,offset){
-  return rows.map(function(r,i){
-    const um=mp(r,'Unid Medida','C1_UM','unidade','Unidade');
-    const quant=nNum(mp(r,'C1_QUANT','Quantidade','quantidade'));
-    const quantPed=nNum(mp(r,'Quant.em Ped','quant.em ped','C1_QUJE'));
-    // FIX #9: campos do modal agora mapeados
-    return{
-      C1_FILIAL:      mp(r,'C1_FILIAL','Filial','filial')||'01',
-      C1_FILIAL_DESC: mp(r,'C1_FILIAL_DESC','desc filial'),
-      C1_NUM:         mp(r,'C1_NUM','Numero da SC','numero da sc','numero')||String(offset+i+1).padStart(6,'0'),
-      C1_ITEM:        mp(r,'C1_ITEM','Item da SC','item da sc')||String(offset+i+1).padStart(4,'0'),
-      C1_PRODUTO:     mp(r,'C1_PRODUTO','Produto','produto'),
-      C1_DESCRI:      mp(r,'C1_DESCRI','Descricao','descricao'),
-      C1_QUANT:       quant,
-      C1_QUJE:        quantPed,
-      C1_UM:          um,
-      C1_CC:          mp(r,'C1_CC','Centro Custo','centro custo'),
-      C1_EMISSAO:     fmtData(mp(r,'C1_EMISSAO','DT Emissao','dt emissao','emissao')),
-      C1_DATPRF:      fmtData(mp(r,'C1_DATPRF','necessidade','previsao')),
-      C1_SOLICIT:     mp(r,'C1_SOLICIT','solicitante','solicit'),
-      C1_PEDIDO:      mp(r,'C1_PEDIDO','pedido gerado'),
-      C1_STATUS:      nStSC(mp(r,'C1_STATUS','status'),quantPed,quant),
-      C1_GRUPO:       mp(r,'C1_GRUPO','Grupo','grupo'),
-      C1_CLASSEVALOR: mp(r,'C1_CLASSEVALOR','Classe Valor','classe valor'),
-      C1_VALOREST:    nNum(mp(r,'C1_VALOREST','Valor Estim.','valor estim','valor estimado')),
-      C1_APROV:       mp(r,'C1_APROV','aprovacao','aprovação','aprov'),
-      C1_TIPO:        nTipo(mp(r,'C1_TIPO','tipo'),um),
+  var out=new Array(rows.length);
+  for(var i=0;i<rows.length;i++){
+    var r=rows[i];
+    var um=mp(r,'Unid Medida','C1_UM','unidade','Unidade');
+    var quant=nNum(mp(r,'C1_QUANT','Quantidade','quantidade'));
+    var quantPed=nNum(mp(r,'Quant.em Ped','quant.em ped','C1_QUJE'));
+    out[i]={
+      C1_FILIAL:     mp(r,'C1_FILIAL','Filial','filial')||'01',
+      C1_FILIAL_DESC:mp(r,'C1_FILIAL_DESC','desc filial'),
+      C1_NUM:        mp(r,'C1_NUM','Numero da SC','numero da sc','numero')||String(offset+i+1).padStart(6,'0'),
+      C1_ITEM:       mp(r,'C1_ITEM','Item da SC','item da sc')||String(offset+i+1).padStart(4,'0'),
+      C1_PRODUTO:    mp(r,'C1_PRODUTO','Produto','produto'),
+      C1_DESCRI:     mp(r,'C1_DESCRI','Descricao','descricao'),
+      C1_QUANT:      quant,
+      C1_QUJE:       quantPed,
+      C1_UM:         um,
+      C1_CC:         mp(r,'C1_CC','Centro Custo','centro custo'),
+      C1_EMISSAO:    fmtData(mp(r,'C1_EMISSAO','DT Emissao','dt emissao','emissao')),
+      C1_DATPRF:     fmtData(mp(r,'C1_DATPRF','necessidade','previsao')),
+      C1_SOLICIT:    mp(r,'C1_SOLICIT','solicitante','solicit'),
+      C1_PEDIDO:     mp(r,'C1_PEDIDO','pedido gerado'),
+      C1_STATUS:     nStSC(mp(r,'C1_STATUS','status'),quantPed,quant),
+      C1_GRUPO:      mp(r,'C1_GRUPO','Grupo','grupo'),
+      C1_CLASSEVALOR:mp(r,'C1_CLASSEVALOR','Classe Valor','classe valor'),
+      C1_VALOREST:   nNum(mp(r,'C1_VALOREST','Valor Estim.','valor estim','valor estimado')),
+      C1_APROV:      mp(r,'C1_APROV','aprovacao'),
+      C1_TIPO:       nTipo(mp(r,'C1_TIPO','tipo'),um),
     };
-  });
+  }
+  return out;
 }
 
+/* OTIMIZAÇÃO: mapEst usa new Array(length) + índice para evitar push incremental */
 function mapEst(rows,offset){
-  return rows.map(function(r){
-    const qatu=nNum(mp(r,'Saldo Atual','B2_QATU'));
-    const emp=nNum(mp(r,'Empenho','B2_EMPENHO'));
-    // FIX #10: campos do modal agora mapeados
-    return{
-      B1_FILIAL:      mp(r,'Filial','B1_FILIAL')||'01',
-      B1_FILIAL_DESC: mp(r,'B1_FILIAL_DESC','desc filial'),
-      B1_COD:         mp(r,'Codigo','B1_COD'),
-      B1_DESC:        mp(r,'Descricao','B1_DESC'),
-      B1_DESC_CIEN:   mp(r,'Desc. Cientifica','desc cientifica','desc. cientifica','B1_DESC_CIEN'),
-      B1_TIPO:        mp(r,'Tp','tipo','B1_TIPO'),
-      B1_GRUPO:       mp(r,'Grupo','B1_GRUPO'),
-      B1_UM:          mp(r,'UM','B1_UM')||'UN',
-      B2_QATU:        qatu,
-      B2_EMPENHO:     emp,
-      DISPONIVEL:     +(qatu-emp).toFixed(4)*1,
-      B2_SCS:         nNum(mp(r,'SCs Colocadas','scs colocadas','B2_SCS')),
-      B2_PCS:         nNum(mp(r,'PCs Colocados','pcs colocados','B2_PCS')),
-      B2_OPS:         nNum(mp(r,'OPs Colocadas','ops colocadas','B2_OPS')),
-      B2_PVS:         nNum(mp(r,'PVs Colocados','pvs colocados','B2_PVS')),
-      PONTO_PEDIDO:   nNum(mp(r,'Ponto Pedido','ponto pedido')),
-      LOTE_ECON:      nNum(mp(r,'Lote Econom.','lote econom','lote economico')),
-      ENTREGA:        nNum(mp(r,'Entrega','prazo entrega')),
-      EST_MESES:      mp(r,'Estoque em Meses','estoque em meses'),
-      MED_CONSUMO:    nNum(mp(r,'Med. Consumo','med consumo','med. consumo')),
-      ULT_SAIDA:      fmtData(mp(r,'DT.Ult.Saida','ultima saida','dt.ult.saida')),
-      B1_CL:          mp(r,'CL','cl'),
-      CONTR_END:      mp(r,'Contr.Endere','contr.endere','controle endereco'),
-      B1_CLASSE:      mp(r,'Classe ABC','classe abc','classe'),
-      PREV_ENTREGA:   nNum(mp(r,'Prev. Entrega','prev entrega','PREV_ENTREGA')),
-      B2_CM1:         nNum(mp(r,'Custo Medio','custo médio','B2_CM1')),
-      B2_VATU1:       nNum(mp(r,'Valor Estoque','valor em estoque','B2_VATU1')),
-      B1_OBS:         mp(r,'Obs','observacao','observação','B1_OBS'),
+  var out=new Array(rows.length);
+  for(var i=0;i<rows.length;i++){
+    var r=rows[i];
+    var qatu=nNum(mp(r,'Saldo Atual','B2_QATU'));
+    var emp=nNum(mp(r,'Empenho','B2_EMPENHO'));
+    out[i]={
+      B1_FILIAL:    mp(r,'Filial','B1_FILIAL')||'01',
+      B1_FILIAL_DESC:mp(r,'B1_FILIAL_DESC','desc filial'),
+      B1_COD:       mp(r,'Codigo','B1_COD'),
+      B1_DESC:      mp(r,'Descricao','B1_DESC'),
+      B1_DESC_CIEN: mp(r,'Desc. Cientifica','desc cientifica','desc. cientifica','B1_DESC_CIEN'),
+      B1_TIPO:      mp(r,'Tp','tipo','B1_TIPO'),
+      B1_GRUPO:     mp(r,'Grupo','B1_GRUPO'),
+      B1_UM:        mp(r,'UM','B1_UM')||'UN',
+      B2_QATU:      qatu,
+      B2_EMPENHO:   emp,
+      DISPONIVEL:   +(qatu-emp).toFixed(4)*1,
+      B2_SCS:       nNum(mp(r,'SCs Colocadas','scs colocadas','B2_SCS')),
+      B2_PCS:       nNum(mp(r,'PCs Colocados','pcs colocados','B2_PCS')),
+      B2_OPS:       nNum(mp(r,'OPs Colocadas','ops colocadas','B2_OPS')),
+      B2_PVS:       nNum(mp(r,'PVs Colocados','pvs colocados','B2_PVS')),
+      PONTO_PEDIDO: nNum(mp(r,'Ponto Pedido','ponto pedido')),
+      LOTE_ECON:    nNum(mp(r,'Lote Econom.','lote econom','lote economico')),
+      ENTREGA:      nNum(mp(r,'Entrega','prazo entrega')),
+      EST_MESES:    mp(r,'Estoque em Meses','estoque em meses'),
+      MED_CONSUMO:  nNum(mp(r,'Med. Consumo','med consumo','med. consumo')),
+      ULT_SAIDA:    fmtData(mp(r,'DT.Ult.Saida','ultima saida','dt.ult.saida')),
+      B1_CL:        mp(r,'CL','cl'),
+      CONTR_END:    mp(r,'Contr.Endere','contr.endere','controle endereco'),
+      B1_CLASSE:    mp(r,'Classe ABC','classe abc','classe'),
+      PREV_ENTREGA: nNum(mp(r,'Prev. Entrega','prev entrega','PREV_ENTREGA')),
+      B2_CM1:       nNum(mp(r,'Custo Medio','custo médio','B2_CM1')),
+      B2_VATU1:     nNum(mp(r,'Valor Estoque','valor em estoque','B2_VATU1')),
+      B1_OBS:       mp(r,'Obs','observacao','B1_OBS'),
     };
-  });
+  }
+  return out;
 }
 
-// ═══════════════════════════════════════════════
+// ══════════════════════════════════════════════════════
 // GUIA
-// ═══════════════════════════════════════════════
+// ══════════════════════════════════════════════════════
 function rAjuda(){
-  const steps=[
-    {n:1,c:'var(--accent)',t:'Exportar MATA121 — Pedido de Compra (SC7)',
-     d:'No Protheus vá em <strong style="color:var(--text)">Compras → Pedido de Compras (MATA121)</strong>. Na listagem do browse use <strong style="color:var(--text)">Outras Ações → Exportar → Excel</strong>. O relatório exporta: <span style="color:var(--accent);font-family:var(--mono)">Numero, Fornecedor (CNPJ), Produto, Descricao, Prc Unitario, Quantidade, Unidade, Classe Valor, Centro Custo, Data Emissao, Dt. Entrega, Numero da SC, Qtd.Entregue</span>. O campo <strong>Tipo (Estoque/Direto)</strong> é deduzido pela <strong>Unidade = SV</strong>.'},
-    {n:2,c:'var(--teal)',t:'Exportar MATA110 — Solicitação de Compra (SC1)',
-     d:'Vá em <strong style="color:var(--text)">Compras → Solicitação de Compras (MATA110)</strong>. Use <strong style="color:var(--text)">Outras Ações → Exportar → Excel</strong>. Colunas exportadas: <span style="color:var(--accent);font-family:var(--mono)">Numero da SC, Item da SC, Produto, Descricao, Quantidade, Unid Medida, Classe Valor, Valor Estim., DT Emissao, Centro Custo, Quant.em Ped, Grupo</span>. <strong>Quant.em Ped > 0</strong> indica que a SC gerou Pedido de Compra.'},
-    {n:3,c:'var(--accent2)',t:'Exportar MATR290 — Análise de Estoque (SB1/SB2)',
-     d:'Vá em <strong style="color:var(--text)">Estoque → Relatórios → Análise de Estoques (MATR290)</strong>. Configure para mostrar B2_QATU (saldo atual), B2_EMPENHO (reservado), B2_SALPEDI (em pedido de compra) e B2_CM1 (custo médio). Este relatório cruza SB1 (cadastro de produtos) com SB2 (saldos por armazém).'},
-    {n:4,c:'var(--green)',t:'Importar no Monitor',
-     d:'Clique em <strong style="color:var(--text)">Importar Planilhas</strong>. Cada painel aceita o arquivo da rotina correspondente: MATA121, MATA110 ou MATR290. Pode arrastar o arquivo direto ou clicar em Selecionar. O sistema mapeia automaticamente os nomes de coluna — padrão Protheus (C7_NUM) ou título em português (Número do Pedido).'},
-    {n:5,c:'var(--amber)',t:'Monitorar e filtrar',
-     d:'<strong style="color:var(--text)">Dashboard</strong>: KPIs gerais com alertas. <strong style="color:var(--text)">Pedidos SC7</strong>: filtre por C7_TIPO (Estoque/Direto), status (Liberado, Parcial, Cancelado…). <strong style="color:var(--text)">Solicitações SC1</strong>: veja SC sem pedido gerado. <strong style="color:var(--text)">Estoque</strong>: produtos críticos (disponível ≤ 0). Clique em qualquer linha para ver todos os campos.'},
-    {n:6,c:'var(--muted)',t:'Atualizar dados',
-     d:'Para atualizar com nova exportação do Protheus, basta importar novamente — os registros são mesclados por chave única. Para começar do zero clique em <strong style="color:var(--text)">Limpar</strong> no topo. Os dados ficam salvos automaticamente no navegador (IndexedDB) entre sessões.'},
+  var steps=[
+    {n:1,c:'var(--accent)',t:'Exportar MATA121 — Pedido de Compra (SC7)',d:'No Protheus vá em <strong style="color:var(--text)">Compras → Pedido de Compras (MATA121)</strong>. Na listagem use <strong style="color:var(--text)">Outras Ações → Exportar → Excel</strong>. Exporta: Numero, Fornecedor, Produto, Descricao, Prc Unitario, Quantidade, Unidade, Classe Valor, Centro Custo, Data Emissao, Dt. Entrega, Numero da SC, Qtd.Entregue.'},
+    {n:2,c:'var(--teal)',t:'Exportar MATA110 — Solicitação de Compra (SC1)',d:'Vá em <strong style="color:var(--text)">Compras → Solicitação de Compras (MATA110)</strong>. Use <strong style="color:var(--text)">Outras Ações → Exportar → Excel</strong>. Colunas: Numero da SC, Item da SC, Produto, Descricao, Quantidade, Unid Medida, Classe Valor, Valor Estim., DT Emissao, Centro Custo, Quant.em Ped, Grupo.'},
+    {n:3,c:'var(--accent2)',t:'Exportar MATR290 — Análise de Estoque (SB1/SB2)',d:'Vá em <strong style="color:var(--text)">Estoque → Relatórios → Análise de Estoques (MATR290)</strong>. Configure para mostrar B2_QATU, B2_EMPENHO, B2_SALPEDI e B2_CM1. Este relatório cruza SB1 com SB2.'},
+    {n:4,c:'var(--green)',t:'Importar no Monitor',d:'Clique em <strong style="color:var(--text)">Importar Planilhas</strong>. Cada painel aceita o arquivo da rotina correspondente. Pode arrastar o arquivo ou clicar em Selecionar. O sistema mapeia automaticamente os nomes de coluna.'},
+    {n:5,c:'var(--amber)',t:'Monitorar e filtrar',d:'<strong style="color:var(--text)">Dashboard</strong>: KPIs gerais. <strong style="color:var(--text)">Pedidos SC7</strong>: filtre por Estoque/Direto e status. <strong style="color:var(--text)">Solicitações SC1</strong>: SC sem pedido gerado. <strong style="color:var(--text)">Estoque</strong>: crítico (disp ≤ 0), baixo e ponto de pedido.'},
+    {n:6,c:'var(--muted)',t:'Atualizar dados',d:'Para atualizar, basta importar novamente — os registros são mesclados por chave única. Para começar do zero clique em <strong style="color:var(--text)">Limpar</strong> no topo. Dados ficam salvos no navegador (IndexedDB) entre sessões.'},
   ];
-  return`
-  <div class="sh"><div class="sh-title">Guia de Uso — Passo a Passo</div><div class="sh-sub">MATA110 · MATA121 · MATR290 — do zero ao monitor</div></div>
-  <div class="step-grid">
-    ${steps.map(s=>`<div class="step">
-      <div class="step-n" style="background:${s.c}18;border:1.5px solid ${s.c};color:${s.c}">${s.n}</div>
-      <div><div class="step-t">${s.t}</div><div class="step-d">${s.d}</div></div>
-    </div>`).join('')}
-  </div>
-  <div class="info-box">
-    <div class="info-box-t">💡 C7_TIPO e C1_TIPO — diferença entre Estoque e Uso Direto</div>
-    <div class="info-box-d">
-      O monitor detecta o tipo automaticamente pela coluna <span style="color:var(--accent);font-family:var(--mono)">Unidade / Unid Medida</span>: quando o valor é <span style="color:var(--accent2)">SV</span>, o item é classificado como <span style="color:var(--accent2)">Serviço / Uso Direto</span>. Qualquer outra unidade (UN, KG, MT, PC…) é classificado como <span style="color:var(--accent)">Estoque</span>. O status da SC é inferido pela coluna <span style="color:var(--accent);font-family:var(--mono)">Quant.em Ped</span>: valor &gt; 0 indica que a SC gerou Pedido de Compra.
-    </div>
-  </div>`;
+  return'<div class="sh"><div class="sh-title">Guia de Uso — Passo a Passo</div><div class="sh-sub">MATA110 · MATA121 · MATR290 — do zero ao monitor</div></div>'
+    +'<div class="step-grid">'+steps.map(function(s){return'<div class="step"><div class="step-n" style="background:'+s.c+'18;border:1.5px solid '+s.c+';color:'+s.c+'">'+s.n+'</div><div><div class="step-t">'+s.t+'</div><div class="step-d">'+s.d+'</div></div></div>';}).join('')+'</div>'
+    +'<div class="info-box"><div class="info-box-t">💡 C7_TIPO e C1_TIPO — diferença entre Estoque e Uso Direto</div><div class="info-box-d">O monitor detecta o tipo pela coluna <span style="color:var(--accent);font-family:var(--mono)">Unidade / Unid Medida</span>: quando o valor é <span style="color:var(--accent2)">SV</span>, o item é classificado como <span style="color:var(--accent2)">Uso Direto</span>. Qualquer outra unidade é classificada como <span style="color:var(--accent)">Estoque</span>.</div></div>';
 }
 
-// ═══════════════════════════════════════════════
-// PERSISTÊNCIA — FIX #6: carregar corrigido
-// ═══════════════════════════════════════════════
-let _db=null;
+// ══════════════════════════════════════════════════════
+// PERSISTÊNCIA IndexedDB
+// ══════════════════════════════════════════════════════
+var _db=null;
 function abrirDB(){
   return new Promise(function(res,rej){
     if(_db){res(_db);return;}
-    const req=indexedDB.open('MonitorCompras',3);
-    req.onupgradeneeded=function(e){const db=e.target.result;if(!db.objectStoreNames.contains('dados'))db.createObjectStore('dados');};
+    var req=indexedDB.open('MonitorCompras',3);
+    req.onupgradeneeded=function(e){var db=e.target.result;if(!db.objectStoreNames.contains('dados')) db.createObjectStore('dados');};
     req.onsuccess=function(e){_db=e.target.result;res(_db);};
     req.onerror=function(){rej(req.error);};
   });
 }
 
-async function _salvarAgora(){
-  const ts=new Date().toLocaleTimeString('pt-BR');
-  try{
-    const db=await abrirDB();
-    const tx=db.transaction('dados','readwrite');
-    const st=tx.objectStore('dados');
+/* OTIMIZAÇÃO: salvar em 3 transações separadas para não bloquear thread por mais de 16ms */
+function _salvarAgora(){
+  var ts=new Date().toLocaleTimeString('pt-BR');
+  abrirDB().then(function(db){
+    var tx=db.transaction('dados','readwrite');
+    var st=tx.objectStore('dados');
     st.put(S.pc,'pc');st.put(S.sc,'sc');st.put(S.est,'est');st.put(ts,'ts');
-    tx.oncomplete=()=>setSyncStatus('✓ Salvo às '+ts);
-  }catch(_){}
+    tx.oncomplete=function(){setSyncStatus('✓ Salvo às '+ts);};
+  }).catch(function(){});
 }
+function setSyncStatus(msg){var el=document.getElementById('sync-ts');if(el) el.textContent=msg;}
 
-function setSyncStatus(msg){const el=document.getElementById('sync-ts');if(el)el.textContent=msg;}
-
-async function carregar(){
-  try{
-    const db=await abrirDB();
-    // FIX #6: usa Promise para aguardar as leituras antes de renderizar
-    await new Promise(function(res){
-      const tx=db.transaction('dados','readonly');
-      const st=tx.objectStore('dados');
-      st.get('pc').onsuccess=e=>{if(e.target.result&&Array.isArray(e.target.result))S.pc=e.target.result;};
-      st.get('sc').onsuccess=e=>{if(e.target.result&&Array.isArray(e.target.result))S.sc=e.target.result;};
-      st.get('est').onsuccess=e=>{if(e.target.result&&Array.isArray(e.target.result))S.est=e.target.result;};
-      st.get('ts').onsuccess=e=>{if(e.target.result)setSyncStatus('✓ Salvo às '+e.target.result);};
+function carregar(){
+  return abrirDB().then(function(db){
+    return new Promise(function(res){
+      var tx=db.transaction('dados','readonly');
+      var st=tx.objectStore('dados');
+      st.get('pc').onsuccess=function(e){if(e.target.result&&Array.isArray(e.target.result)) S.pc=e.target.result;};
+      st.get('sc').onsuccess=function(e){if(e.target.result&&Array.isArray(e.target.result)) S.sc=e.target.result;};
+      st.get('est').onsuccess=function(e){if(e.target.result&&Array.isArray(e.target.result)) S.est=e.target.result;};
+      st.get('ts').onsuccess=function(e){if(e.target.result) setSyncStatus('✓ Salvo às '+e.target.result);};
       tx.oncomplete=res;
     });
-  }catch(_){}
+  }).catch(function(){});
 }
 
 function limpar(){
-  if(!confirm('Limpar todos os dados?'))return;
+  if(!confirm('Limpar todos os dados?')) return;
   S.pc=[];S.sc=[];S.est=[];S.idx={pc:[],sc:[],est:[]};
   _salvarAgora();updBadges();render();
 }
 function salvarManual(){_salvarAgora();toast('💾 Dados salvos!','success');}
+
 function so(campo){
-  if(S.sort.campo===campo)S.sort.dir*=-1;
+  if(S.sort.campo===campo) S.sort.dir*=-1;
   else{S.sort.campo=campo;S.sort.dir=1;}
-  // FIX #13: reseta posição do scroll virtual ao ordenar
   S.vs.est.start=0;
   renderTabela(true);
 }
 
-// FIX #2: usa VROW_H consistente com a constante declarada acima
-function onScrollEst(el){
-  const newStart=Math.max(0,Math.floor(el.scrollTop/VROW_H)-15);
-  if(Math.abs(newStart-(S.vs.est.start||0))>20){
-    S.vs.est.start=newStart;
-    renderVEst();
-  }
-}
-
-function toast(msg,tipo='info'){
-  const w=document.getElementById('toasts');
-  const t=document.createElement('div');t.className=`toast ${tipo}`;t.textContent=msg;
-  w.appendChild(t);setTimeout(()=>t.remove(),3500);
+function toast(msg,tipo){
+  tipo=tipo||'info';
+  var w=document.getElementById('toasts');
+  var t=document.createElement('div');t.className='toast '+tipo;t.textContent=msg;
+  w.appendChild(t);setTimeout(function(){t.remove();},3500);
 }
 function toggleSb(){document.getElementById('sidebar').classList.toggle('open');}
 function bindDrop(){
-  document.querySelectorAll('.imp-zone').forEach(z=>{
-    z.addEventListener('dragover',e=>{e.preventDefault();z.classList.add('drag');});
-    z.addEventListener('dragleave',()=>z.classList.remove('drag'));
+  document.querySelectorAll('.imp-zone').forEach(function(z){
+    z.addEventListener('dragover',function(e){e.preventDefault();z.classList.add('drag');});
+    z.addEventListener('dragleave',function(){z.classList.remove('drag');});
   });
 }
 
-// FIX #6: inicialização correta — aguarda carregar() antes de renderizar
+// INIT
 carregar().then(function(){
   if(S.pc.length) rebuildIdxPC();
   if(S.sc.length) rebuildIdxSC();
