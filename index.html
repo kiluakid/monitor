@@ -195,12 +195,6 @@ input[type=file]{display:none;}
 </head>
 <body>
 
-<!--
-  WORKER: O XLSX já está carregado no <head> via CDN.
-  O worker usa a mesma URL para aproveitar o cache do browser.
-  OTIMIZAÇÃO: processarData usa lookup de regex compilado uma vez.
-  OTIMIZAÇÃO: sheet_to_json com raw:false para delegar conversão de data ao XLSX.
--->
 <script id="worker-script" type="javascript/worker">
 var _reBarra = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/;
 var _reISO   = /^(\d{4})-(\d{2})-(\d{2})/;
@@ -250,12 +244,8 @@ self.onmessage=function(e){
         resultado.push(o);
       }
     } else {
-      /* XLSX já está carregado na página, mas no worker precisamos importar.
-         Usamos a mesma CDN do <head> para aproveitar cache de rede. */
       importScripts('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
       var buffer=e.data.buffer;
-
-      /* OTIMIZAÇÃO: raw:false faz o XLSX converter datas automaticamente */
       var wb=XLSX.read(buffer,{type:'array',cellDates:true,dense:true});
 
       function normHdr(h){return String(h||'').replace(/_x000D_/g,'').replace(/\r\n|\r|\n/g,' ').replace(/\s+/g,' ').trim();}
@@ -265,16 +255,31 @@ self.onmessage=function(e){
       }
 
       var nomes=wb.SheetNames, abas=[];
+      var IGNORAR=['parametros','estoque zerado','dados r','tratamento controle'];
+      
       if(importType==='est'){
         var nomeLimpo=function(n){return n.toLowerCase().replace(/\s+/g,'');};
         var abaMatr=nomes.find(function(n){return nomeLimpo(n).includes('matr290geral');});
         var abaGeral=nomes.find(function(n){return n.toLowerCase().includes('geral');});
-        abas=[abaMatr||abaGeral];
-        if(!abas[0]) throw new Error("Aba 'matr290 geral' não encontrada no arquivo Excel.");
+        
+        if (abaMatr) {
+          abas = [abaMatr];
+        } else if (abaGeral) {
+          abas = [abaGeral];
+        } else {
+          // Fallback: Pega todas as abas que não sejam a de parâmetros
+          abas = nomes.filter(function(n){
+            return !IGNORAR.some(function(ig){return n.toLowerCase().includes(ig);});
+          });
+          if(abas.length === 0) {
+            throw new Error("Não foi possível encontrar a aba de dados no Excel.");
+          }
+        }
       } else {
-        var IGNORAR=['parametros','estoque zerado e prev entrega','dados rápido sc e pc','tratamento controle de endereç','dados rápidos qnt e end'];
         var abaGeral=nomes.find(function(n){return n.toLowerCase().includes('geral');});
-        abas=abaGeral?[abaGeral]:nomes.filter(function(n){return !IGNORAR.some(function(ig){return n.toLowerCase().includes(ig.toLowerCase());});});
+        abas=abaGeral?[abaGeral]:nomes.filter(function(n){
+          return !IGNORAR.some(function(ig){return n.toLowerCase().includes(ig);});
+        });
       }
 
       for(var ai=0;ai<abas.length;ai++){
@@ -282,8 +287,6 @@ self.onmessage=function(e){
         var ws=wb.Sheets[nome];
         if(!ws) continue;
 
-        /* OTIMIZAÇÃO: sheet_to_json com header:1 retorna arrays — mais rápido
-           que objetos. Convertemos para objeto só após validar a linha. */
         var arr=XLSX.utils.sheet_to_json(ws,{header:1,defval:null,raw:true});
         if(!arr||arr.length<2) continue;
 
@@ -296,14 +299,12 @@ self.onmessage=function(e){
         var hdrs=arr[hdrIdx].map(normHdr);
         if(!abaTemDados(hdrs)) continue;
 
-        /* Pré-calcula índices das colunas de data para evitar .includes() no loop interno */
         var dataCols={};
         hdrs.forEach(function(h,j){
           var hl=h.toLowerCase();
           if(hl.includes('data')||hl.includes('emissao')||hl.includes('entrega')||hl.includes('saida')) dataCols[j]=true;
         });
 
-        /* OTIMIZAÇÃO: acumula em array local e concatena uma vez */
         var lote=[];
         for(var ri=hdrIdx+1;ri<arr.length;ri++){
           var row=arr[ri];
@@ -316,7 +317,6 @@ self.onmessage=function(e){
           }
           lote.push(obj);
         }
-        /* push em bloco evita realocação incremental */
         Array.prototype.push.apply(resultado,lote);
       }
     }
@@ -769,8 +769,6 @@ function getFEst(){
   return d;
 }
 
-/* OTIMIZAÇÃO: rowsEst usa array de partes, evita XSS-prone innerHTML em loop,
-   e pré-calcula variáveis fora do template string */
 function rowsEst(slice){
   if(!slice.length) return '';
   var rows=[];
@@ -814,7 +812,6 @@ function rowsEst(slice){
   return rows.join('');
 }
 
-/* Listener global para clique na linha de estoque */
 document.addEventListener('click',function(e){
   if(S.pg!=='estoque') return;
   var tr=e.target.closest('tr.est-row');
